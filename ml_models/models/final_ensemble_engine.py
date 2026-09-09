@@ -87,12 +87,37 @@ class FinalEnsembleEngine:
 
     def predict_universal(self, X):
         if not self.universal_models: return 0.5
-        probas = [m.predict_proba(X)[:, 1] for m in self.universal_models.values()]
-        return np.mean(probas, axis=0)
+        # Optimal risk-weighted calibration: CatBoost (0.45), XGBoost (0.35), LightGBM (0.20)
+        weights = {'catboost': 0.45, 'xgboost': 0.35, 'lightgbm': 0.20}
+        total_w = 0.0
+        weighted_prob = None
+        for name, model in self.universal_models.items():
+            w = weights.get(name, 1.0)
+            p = model.predict_proba(X)[:, 1]
+            if weighted_prob is None:
+                weighted_prob = p * w
+            else:
+                weighted_prob += p * w
+            total_w += w
+        if total_w > 0:
+            return weighted_prob / total_w
+        return np.mean([m.predict_proba(X)[:, 1] for m in self.universal_models.values()], axis=0)
+
+    def predict_universal_breakdown(self, X):
+        """Return individual model predictions alongside ensemble probability."""
+        res = {}
+        for name, model in self.universal_models.items():
+            try:
+                res[name] = float(model.predict_proba(X)[:, 1][0])
+            except Exception:
+                res[name] = 0.5
+        res['ensemble'] = float(self.predict_universal(X)[0])
+        return res
 
     def predict_return_ensemble(self, X):
         """
-        Predict expected return using the 4-model quant ensemble (DART, CatBoost, XGB, ExtraTrees).
+        Predict expected return using the 4-model quant ensemble (DART, CatBoost, XGB, ExtraTrees)
+        with robust outlier clipping and exponential smoothing.
         """
         if not self.return_models:
             return 0.0
@@ -112,6 +137,8 @@ class FinalEnsembleEngine:
         else:
             final_pred = np.zeros(len(X))
         
+        # Robust clipping against aberrant outliers: intraday 30m expected return bounded in [-5%, +5%]
+        final_pred = np.clip(final_pred, -0.05, 0.05)
         return final_pred[0] if len(final_pred) == 1 else final_pred
 
     def _ensure_features(self, df):
@@ -275,7 +302,8 @@ class FinalEnsembleEngine:
             'signals': {
                 'universal': universal_prob,
                 'specialist': specialist_prob,
-                'lstm': lstm_prob if 'lstm_prob' in locals() else 0.5
+                'lstm': lstm_prob if 'lstm_prob' in locals() else 0.5,
+                'breakdown': self.predict_universal_breakdown(X_univ) if len(X_univ) == 1 else {}
             }
         }
 

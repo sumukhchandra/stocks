@@ -21,7 +21,9 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 from database.stocks_config import (
     STOCK_SYMBOLS,
@@ -66,15 +68,29 @@ class NSEAutoTrader:
 
     # -- State Management -----------------------------------------------------
 
+    def _reload_state(self):
+        """Reload latest persisted state from disk."""
+        if os.path.exists(STATE_FILE):
+            try:
+                with open(STATE_FILE, "r") as f:
+                    self.state = json.load(f)
+            except Exception:
+                pass
+
     def _load_state(self, override_capital=None):
         """Load persisted state or initialise fresh."""
         if os.path.exists(STATE_FILE):
-            with open(STATE_FILE, "r") as f:
-                self.state = json.load(f)
+            try:
+                with open(STATE_FILE, "r") as f:
+                    self.state = json.load(f)
+            except Exception:
+                self.state = {}
+
             # Allow capital override on fresh start
             if override_capital is not None and not self.state.get("positions"):
                 self.state["total_capital"] = override_capital
                 self.state["available_capital"] = override_capital
+                self._save_state()
         else:
             cap = override_capital or DEFAULT_CAPITAL
             self.state = {
@@ -90,7 +106,7 @@ class NSEAutoTrader:
                 "last_retrain": None,
                 "recent_outcomes": [],  # List of True/False for rolling accuracy
             }
-        self._save_state()
+            self._save_state()
 
     def _save_state(self):
         with open(STATE_FILE, "w") as f:
@@ -608,8 +624,9 @@ class NSEAutoTrader:
 
     def get_portfolio_summary(self):
         """Returns a summary dict for the dashboard."""
+        self._reload_state()
         total_invested = sum(
-            p["invested"] for p in self.state["positions"].values()
+            p["invested"] for p in self.state.get("positions", {}).values()
         )
         return {
             "total_capital": round(self.state["total_capital"], 2),
@@ -637,6 +654,186 @@ class NSEAutoTrader:
             "last_scan": self.state.get("last_scan"),
             "last_retrain": self.state.get("last_retrain"),
         }
+
+    def get_live_trade_feed(self, price_map=None):
+        """
+        Compiles a comprehensive live chronological audit feed of:
+        - Currently HOLDING active positions (re-evaluated live against current market prices).
+        - Executed BUY and SELL transactions from trade history.
+        - Latest AI scan signals.
+        """
+        self._reload_state()
+        price_map = price_map or {}
+        feed = []
+        now = datetime.now()
+
+        # 1. Active HOLDING positions
+        for symbol, pos in self.state.get("positions", {}).items():
+            entry_p = float(pos.get("entry_price", 0))
+            curr_p = float(price_map.get(symbol, entry_p))
+            qty = float(pos.get("qty", 0))
+            invested = float(pos.get("invested", 0))
+
+            gross_ret = (curr_p - entry_p) / entry_p if entry_p > 0 else 0.0
+            bd = self.tax_engine.calculate_total_cost(invested, gross_ret)
+
+            # Hold duration
+            try:
+                raw_time = pos.get("entry_time")
+                if isinstance(raw_time, str):
+                    entry_dt = datetime.fromisoformat(raw_time)
+                elif hasattr(raw_time, 'to_pydatetime'):
+                    entry_dt = raw_time.to_pydatetime()
+                elif isinstance(raw_time, datetime):
+                    entry_dt = raw_time
+                else:
+                    entry_dt = now
+                diff = now - entry_dt
+                hold_mins = int(diff.total_seconds() / 60)
+                if hold_mins >= 60:
+                    hold_str = f"{hold_mins // 60}h {hold_mins % 60}m"
+                else:
+                    hold_str = f"{hold_mins}m"
+            except Exception:
+                hold_str = "Active"
+
+            tp_price = entry_p * 1.015  # 1.5% TP
+            sl_price = entry_p * (1 - MAX_GROSS_LOSS_PCT)
+
+            dist_to_tp = ((tp_price - curr_p) / curr_p) * 100
+            dist_to_sl = ((curr_p - sl_price) / curr_p) * 100
+
+            note = f"Trailing to TP ({dist_to_tp:+.2f}% away) • SL Buffer: {dist_to_sl:.2f}%"
+
+            feed.append({
+                "Timestamp": pos.get("entry_time", now.isoformat())[:19].replace("T", " "),
+                "Symbol": symbol.replace(".NS", ""),
+                "Company": STOCK_UNIVERSE.get(symbol, symbol),
+                "Action / Status": "🛡 HOLDING",
+                "Entry Price": f"₹{entry_p:,.2f}",
+                "Current / Exit": f"₹{curr_p:,.2f}",
+                "Qty": f"{qty:.2f}",
+                "Invested": f"₹{invested:,.2f}",
+                "Gross P&L": f"₹{bd['gross_profit']:+,.2f}",
+                "Net P&L (Post-Tax)": f"₹{bd['net_profit']:+,.2f}",
+                "Net ROI %": f"{bd['net_return_pct']:+.3f}%",
+                "Fees & Tax": f"₹{bd['total_cost'] + bd['tax']:,.2f}",
+                "Hold Time": hold_str,
+                "Target (TP)": f"₹{tp_price:,.2f} (+1.5%)",
+                "Stop Loss (SL)": f"₹{sl_price:,.2f} (-0.8%)",
+                "AI Conf": f"{pos.get('confidence', 0.8)*100:.1f}%",
+                "Details / Reason": note,
+                "_status_code": "HOLDING",
+                "_sort_ts": str(pos.get("entry_time", now.isoformat())),
+            })
+
+        # 2. Executed BUY and SELL transactions
+        history = self.get_trade_history()
+        for t in history[-50:]:
+            action = t.get("action", "")
+            reason = t.get("reason", "")
+            ts_str = str(t.get("timestamp", now.isoformat()))[:19].replace("T", " ")
+            sym = t.get("symbol", "")
+
+            if action == "BUY":
+                p = float(t.get("price", t.get("entry_price", 0)))
+                inv = float(t.get("invested", 0))
+                qty = float(t.get("qty", 0))
+                conf = float(t.get("confidence", 0))
+                feed.append({
+                    "Timestamp": ts_str,
+                    "Symbol": sym.replace(".NS", ""),
+                    "Company": t.get("company", STOCK_UNIVERSE.get(sym, sym)),
+                    "Action / Status": "🟢 BOUGHT",
+                    "Entry Price": f"₹{p:,.2f}",
+                    "Current / Exit": f"₹{p:,.2f}",
+                    "Qty": f"{qty:.2f}",
+                    "Invested": f"₹{inv:,.2f}",
+                    "Gross P&L": "—",
+                    "Net P&L (Post-Tax)": "—",
+                    "Net ROI %": "—",
+                    "Fees & Tax": "—",
+                    "Hold Time": "Entry",
+                    "Target (TP)": f"₹{p*1.015:,.2f} (+1.5%)",
+                    "Stop Loss (SL)": f"₹{p*(1-MAX_GROSS_LOSS_PCT):,.2f} (-0.8%)",
+                    "AI Conf": f"{conf*100:.1f}%",
+                    "Details / Reason": "Buy order executed via AI Ensemble Signal",
+                    "_status_code": "BOUGHT",
+                    "_sort_ts": str(t.get("timestamp", now.isoformat())),
+                })
+            elif action == "SELL":
+                entry_p = float(t.get("entry_price", 0))
+                exit_p = float(t.get("exit_price", 0))
+                qty = float(t.get("qty", 0))
+                inv = float(t.get("invested", 0))
+                net_p = float(t.get("net_profit", 0))
+                gross_p = float(t.get("gross_profit", 0))
+                fees = float(t.get("total_cost", 0)) + float(t.get("tax", 0))
+                roi = float(t.get("net_return_pct", 0))
+
+                badge = "🔴 SOLD (TP)" if reason == "TAKE_PROFIT" else "🔴 SOLD (SL)" if reason == "STOP_LOSS" else f"🔴 SOLD ({reason})"
+
+                feed.append({
+                    "Timestamp": ts_str,
+                    "Symbol": sym.replace(".NS", ""),
+                    "Company": t.get("company", STOCK_UNIVERSE.get(sym, sym)),
+                    "Action / Status": badge,
+                    "Entry Price": f"₹{entry_p:,.2f}",
+                    "Current / Exit": f"₹{exit_p:,.2f}",
+                    "Qty": f"{qty:.2f}",
+                    "Invested": f"₹{inv:,.2f}",
+                    "Gross P&L": f"₹{gross_p:+,.2f}",
+                    "Net P&L (Post-Tax)": f"₹{net_p:+,.2f}",
+                    "Net ROI %": f"{roi:+.3f}%",
+                    "Fees & Tax": f"₹{fees:,.2f}",
+                    "Hold Time": t.get("hold_duration", "Closed"),
+                    "Target (TP)": f"₹{entry_p*1.015:,.2f}",
+                    "Stop Loss (SL)": f"₹{entry_p*(1-MAX_GROSS_LOSS_PCT):,.2f}",
+                    "AI Conf": "Exited",
+                    "Details / Reason": f"Exit triggered: {reason.replace('_', ' ').title()}",
+                    "_status_code": "SOLD",
+                    "_sort_ts": str(t.get("timestamp", now.isoformat())),
+                })
+
+        # 3. Latest AI Scan signals
+        for s in self.state.get("last_signals", []):
+            sym = s.get("symbol", "")
+            if sym in self.state.get("positions", {}):
+                continue
+            act = s.get("action", "SKIP")
+            ts_str = str(s.get("timestamp", now.isoformat()))[:19].replace("T", " ")
+            p = float(s.get("price", 0))
+            prob = float(s.get("probability", 0))
+            exp_ret = float(s.get("expected_return", 0))
+            reason = s.get("reason", "")
+
+            badge = "🟢 BUY SIGNAL" if act == "BUY" else "📡 SCAN (WAIT)"
+
+            feed.append({
+                "Timestamp": ts_str,
+                "Symbol": sym.replace(".NS", ""),
+                "Company": STOCK_UNIVERSE.get(sym, sym),
+                "Action / Status": badge,
+                "Entry Price": "—",
+                "Current / Exit": f"₹{p:,.2f}",
+                "Qty": "—",
+                "Invested": "—",
+                "Gross P&L": "—",
+                "Net P&L (Post-Tax)": "—",
+                "Net ROI %": f"Exp: {exp_ret*100:+.2f}%",
+                "Fees & Tax": "—",
+                "Hold Time": "Scan",
+                "Target (TP)": f"₹{p*1.015:,.2f}",
+                "Stop Loss (SL)": f"₹{p*(1-MAX_GROSS_LOSS_PCT):,.2f}",
+                "AI Conf": f"{prob*100:.1f}%",
+                "Details / Reason": reason.replace("_", " ").title() if reason else "Evaluated in live cycle",
+                "_status_code": "SCAN",
+                "_sort_ts": str(s.get("timestamp", now.isoformat())),
+            })
+
+        # Sort descending by sort timestamp
+        feed.sort(key=lambda x: x.get("_sort_ts", ""), reverse=True)
+        return feed
 
     def set_capital(self, amount):
         """Reset capital (only when no positions are open)."""
@@ -686,11 +883,14 @@ class NSEAutoTrader:
             try:
                 now = datetime.now()
                 # Only trade during market hours (9:15 AM - 3:30 PM IST)
-                if now.hour < 9 or (now.hour == 9 and now.minute < 15):
-                    time.sleep(60)
-                    continue
-                if now.hour > 15 or (now.hour == 15 and now.minute > 30):
-                    time.sleep(60)
+                if now.hour < 9 or (now.hour == 9 and now.minute < 15) or now.hour > 15 or (now.hour == 15 and now.minute > 30):
+                    time.sleep(30)
+                    if os.path.exists(STATE_FILE):
+                        with open(STATE_FILE, "r") as f:
+                            fresh = json.load(f)
+                            if not fresh.get("is_trading", False):
+                                print("Trading stopped by user.")
+                                break
                     continue
 
                 print(f"\n[{now.strftime('%H:%M:%S')}] Scanning {len(STOCK_SYMBOLS)} stocks...")

@@ -38,6 +38,7 @@ jobs:
           git lfs track "*.parquet"
           git lfs track "*.h5"
           git lfs track "*.pt"
+          git lfs track "*.pth"
           
           # Commit and push
           git add .

@@ -21,5 +21,25 @@ jobs:
           HF_USERNAME: sumukhchandra
           HF_SPACE_NAME: nse-stocks-dashboard
         run: |
-          git remote add space https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME
-          git push --force space main
+          # Configure Git
+          git config --global user.email "actions@github.com"
+          git config --global user.name "GitHub Actions"
+          
+          # Clone the Hugging Face Space
+          git clone https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME hf_space
+          
+          # Sync files over (excluding git metadata)
+          rsync -av --delete --exclude='.git' --exclude='hf_space' ./ hf_space/
+          
+          cd hf_space
+          # Ensure large files are tracked by Git LFS
+          git lfs install
+          git lfs track "*.joblib"
+          git lfs track "*.parquet"
+          git lfs track "*.h5"
+          git lfs track "*.pt"
+          
+          # Commit and push
+          git add .
+          git commit -m "Auto-sync from GitHub" || echo "No changes to commit"
+          git push https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME main

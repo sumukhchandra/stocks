@@ -1,0 +1,22 @@
+services:
+  # Streamlit Web App & Mobile Dashboard
+  - type: web
+    name: nse-stocks-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: streamlit run frontend/app.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+
+  # FastAPI REST Backend API
+  - type: web
+    name: nse-stocks-api
+    runtime: python
+    plan: free
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: uvicorn apps.api.src.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9

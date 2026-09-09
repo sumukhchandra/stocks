@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: uvicorn apps.api.src.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env.example
+    volumes:
+      - ./data:/app/data
+      - ./database:/app/database
+      - ./ml_models:/app/ml_models
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: streamlit run frontend/app.py --server.port 8501 --server.address 0.0.0.0
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    volumes:
+      - ./data:/app/data
+      - ./database:/app/database
+    restart: unless-stopped

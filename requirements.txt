@@ -11,7 +11,9 @@ fastparquet>=2023.10.0
 scipy>=1.11.0
 
 # Machine Learning & Modeling
+torch>=2.0.0
 scikit-learn>=1.3.0
+matplotlib>=3.7.0
 joblib>=1.3.0
 catboost>=1.2.0
 xgboost>=2.0.0

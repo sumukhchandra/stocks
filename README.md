@@ -1,3 +1,14 @@
+---
+title: NSE Stocks Dashboard
+emoji: 📈
+colorFrom: blue
+colorTo: indigo
+sdk: streamlit
+sdk_version: 1.32.0
+app_file: frontend/app.py
+pinned: false
+license: mit
+---
 # 📈 NSE Automated Algorithmic Trading & AI Prediction System
 
 An end-to-end quantitative trading, simulation, and machine learning framework designed specifically for Indian National Stock Exchange (NSE) intraday equities with compounding, real-world Indian tax computation (STT, GST, Stamp Duty, SEBI turnover fees, 25% STCG), and Zerodha brokerage modeling.

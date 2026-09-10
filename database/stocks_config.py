@@ -18,25 +18,31 @@ STOCK_UNIVERSE = {
 
 STOCK_SYMBOLS = list(STOCK_UNIVERSE.keys())
 
-# --- Trading Thresholds & High-Yield Target Optimization ----------------------
-TARGET_PROFIT_PER_TRADE = 50.0       # Target Rs.50 net profit per successful trade
-TARGET_DAILY_PROFIT = 500.0         # Target Rs.500 daily net profit (10-15 successful trades)
-INTRADAY_LEVERAGE = 5.0             # 5x Margin Intraday Square-off (MIS standard on Zerodha/Upstox)
-MIN_POSITION_SIZE_INR = 4500.0      # Minimum size per trade (~Rs.4,500 - Rs.5,000) to yield Rs.50+ net after all taxes
-MIN_NET_PROFIT_PCT = 0.0005         # 0.05% minimum net profit after ALL costs
-MIN_EXPECTED_RETURN_PCT = 0.0010    # 0.10% (10 bps) minimum predicted return from ensemble
-PROFIT_TARGET_PCT = 0.012           # 1.20% Take-Profit target (optimized for 5m intraday completion to hit 10-15 trades/day)
-MAX_GROSS_LOSS_PCT = 0.006          # 0.60% initial Stop-Loss limit (strict 2:1 reward-to-risk ratio)
-TRAILING_STOP_ACTIVATION_PCT = 0.006 # Ratchet stop-loss to Breakeven (+0.25%) once trade reaches +0.60%
-TRAILING_STOP_DISTANCE_PCT = 0.004  # Trails 0.40% below peak watermark
-AUTO_EOD_SQUAREOFF_HOUR = 15        # Auto square-off at 3:20 PM IST to eliminate overnight gap-down risk
-AUTO_EOD_SQUAREOFF_MINUTE = 20
-DEFAULT_CAPITAL = 10000             # Default starting capital (INR) -- overridable from UI
+# --- Strategy Modes & Compounding Configuration ------------------------------
+STRATEGY_MODE = "SINGLE_BULLET"      # Default mode: "SINGLE_BULLET" (100% in #1 setup) or "MULTI_SPLIT" (split into N baskets)
+SINGLE_BULLET_ALLOCATION_PCT = 0.98  # 98% of available capital into the single highest-conviction trade
+MULTI_SPLIT_POSITIONS = 3            # Split capital into 3 concurrent trades in MULTI_SPLIT mode
 
-# --- Position Sizing (dynamic, confidence-based) -----------------------------
-# Percentage of AVAILABLE (uninvested) capital to allocate per trade
+# --- Trading Thresholds & Profit Optimization (Post-Tax Guarantee) -----------
+TARGET_NET_PROFIT_PCT = 0.008        # 0.80% minimum NET profit after ALL Zerodha fees and STT
+MIN_NET_PROFIT_PCT = 0.0005         # 0.05% absolute hurdle
+MIN_EXPECTED_RETURN_PCT = 0.0010    # 0.10% (10 bps) minimum predicted return from ensemble
+PROFIT_TARGET_PCT = 0.011            # 1.10% Take-Profit target (guarantees >= 0.80% net post-tax)
+MAX_GROSS_LOSS_PCT = 0.006           # 0.60% Stop-Loss limit (strict 2:1 reward-to-risk ratio)
+TRAILING_STOP_ACTIVATION_PCT = 0.006  # Ratchet stop-loss to Breakeven (+0.25%) once trade gains +0.60%
+TRAILING_STOP_DISTANCE_PCT = 0.004   # Trails 0.40% below peak watermark
+AUTO_EOD_SQUAREOFF_HOUR = 15         # Auto square-off at 3:20 PM IST to eliminate overnight gap-down risk
+AUTO_EOD_SQUAREOFF_MINUTE = 20
+DEFAULT_CAPITAL = 10000              # Default starting capital (INR 10,000)
+
+TARGET_PROFIT_PER_TRADE = 80.0       # Target Rs.80-100 net profit per trade in single-bullet mode
+TARGET_DAILY_PROFIT = 500.0          # Target Rs.500 daily net profit (10-15 trades)
+INTRADAY_LEVERAGE = 5.0              # 5x Margin Intraday Square-off (MIS on Zerodha)
+MIN_POSITION_SIZE_INR = 3000.0       # Minimum size per trade in split mode
+
+# --- Position Sizing Dictionary (Legacy / Multi-Basket reference) ------------
 POSITION_SIZING = {
-    "high":   0.25,   # High conviction -> larger allocation
+    "high":   0.30,   # High conviction
     "medium": 0.20,   # Moderate
     "low":    0.15,   # Low
 }

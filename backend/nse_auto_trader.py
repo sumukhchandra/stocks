@@ -28,6 +28,10 @@ if ROOT_DIR not in sys.path:
 from database.stocks_config import (
     STOCK_SYMBOLS,
     STOCK_UNIVERSE,
+    STRATEGY_MODE,
+    SINGLE_BULLET_ALLOCATION_PCT,
+    MULTI_SPLIT_POSITIONS,
+    TARGET_NET_PROFIT_PCT,
     MIN_NET_PROFIT_PCT,
     MIN_EXPECTED_RETURN_PCT,
     PROFIT_TARGET_PCT,
@@ -37,7 +41,6 @@ from database.stocks_config import (
     AUTO_EOD_SQUAREOFF_HOUR,
     AUTO_EOD_SQUAREOFF_MINUTE,
     DEFAULT_CAPITAL,
-    POSITION_SIZING,
     SCAN_INTERVAL_SECONDS,
     ACCURACY_RETRAIN_THRESHOLD,
     ROLLING_ACCURACY_WINDOW,
@@ -96,6 +99,10 @@ class NSEAutoTrader:
             except Exception:
                 self.state = {}
 
+            # Ensure strategy_mode exists
+            if "strategy_mode" not in self.state:
+                self.state["strategy_mode"] = STRATEGY_MODE
+
             # Allow capital override on fresh start
             if override_capital is not None and not self.state.get("positions"):
                 self.state["total_capital"] = override_capital
@@ -107,6 +114,7 @@ class NSEAutoTrader:
                 "total_capital": cap,
                 "available_capital": cap,
                 "starting_capital": cap,
+                "strategy_mode": STRATEGY_MODE,
                 "positions": {},
                 "total_trades": 0,
                 "winning_trades": 0,
@@ -220,36 +228,41 @@ class NSEAutoTrader:
 
     # -- Position Sizing ------------------------------------------------------
 
+    def set_strategy_mode(self, mode):
+        """Toggle between 'SINGLE_BULLET' and 'MULTI_SPLIT'."""
+        if mode in ["SINGLE_BULLET", "MULTI_SPLIT"]:
+            self._reload_state()
+            self.state["strategy_mode"] = mode
+            self._save_state()
+            return True, f"Strategy mode switched to {mode}"
+        return False, f"Invalid strategy mode: {mode}"
+
     def _get_allocation(self, confidence, min_confidence=0.50):
         """
-        Target-yield allocation engineered to deliver >= Rs.50 net profit per trade.
-        Allocates ~Rs.4,500 - Rs.5,000 per trade so a 1.2% intraday move yields Rs.50+ net profit
-        after all Zerodha brokerage, STT, and taxes.
+        Allocation based on chosen strategy mode:
+        1. 'SINGLE_BULLET': 98% of liquid capital into the single highest-conviction setup.
+        2. 'MULTI_SPLIT': Capital split into MULTI_SPLIT_POSITIONS concurrent positions.
         """
-        available = self.state["available_capital"]
-        # Calculate target position size to achieve TARGET_PROFIT_PER_TRADE (Rs.50) on PROFIT_TARGET_PCT (1.2%)
-        target_size = max(MIN_POSITION_SIZE_INR, (TARGET_PROFIT_PER_TRADE + 8.0) / PROFIT_TARGET_PCT)
+        mode = self.state.get("strategy_mode", STRATEGY_MODE)
+        available = float(self.state.get("available_capital", 0.0))
 
-        if confidence > 0.75:
-            alloc = target_size * 1.15  # ~Rs.5,500 for high conviction
-        elif confidence >= min_confidence:
-            alloc = target_size        # ~Rs.4,800 - Rs.5,000
-        else:
+        if confidence < min_confidence or available < 1000.0:
             return 0.0
 
-        if available < alloc:
-            # If remaining available cash is at least Rs.2,000, allocate whatever is left
-            if available >= 2000.0:
-                alloc = available
-            else:
-                return 0.0
-
-        return round(float(alloc), 2)
+        if mode == "SINGLE_BULLET":
+            alloc = available * SINGLE_BULLET_ALLOCATION_PCT
+            return round(max(0.0, alloc), 2)
+        else:
+            open_count = len(self.state.get("positions", {}))
+            remaining_slots = max(1, MULTI_SPLIT_POSITIONS - open_count)
+            target_size = available / remaining_slots
+            alloc = min(available, max(MIN_POSITION_SIZE_INR, target_size))
+            return round(max(0.0, alloc), 2)
 
     # -- Core Trading Logic ---------------------------------------------------
 
     def run_single_cycle(self, min_confidence=0.48):
-        """Execute one full scan-and-trade cycle."""
+        """Execute one full scan-and-trade cycle with Strategy Mode support."""
         if not self._ensure_engine():
             return {"status": "error", "message": "Models not loaded"}
 
@@ -261,23 +274,67 @@ class NSEAutoTrader:
 
         results = {"status": "ok", "signals": [], "actions": []}
 
-        # 1. CHECK EXISTING POSITIONS -- sell if profitable or stop-loss
+        # 1. CHECK EXISTING POSITIONS -- sell if profitable (>= 0.8% net / 1.1% gross) or stop-loss
         for symbol in list(self.state["positions"].keys()):
             action = self._check_exit(symbol, feature_df)
             if action:
                 results["actions"].append(action)
 
         # 2. SCAN FOR NEW ENTRIES
-        for symbol in STOCK_SYMBOLS:
-            if symbol in self.state["positions"]:
-                continue  # Already holding
-            if self.state["available_capital"] < 1000:
-                break  # Not enough capital
+        mode = self.state.get("strategy_mode", STRATEGY_MODE)
+        current_open = len(self.state.get("positions", {}))
 
-            signal = self._evaluate_entry(symbol, feature_df, min_confidence=min_confidence)
-            results["signals"].append(signal)
-            if signal.get("action") == "BUY":
-                results["actions"].append(signal)
+        if mode == "SINGLE_BULLET":
+            if current_open >= 1:
+                # Holding 1 active position in Single-Bullet mode. Scan others for Radar feed only.
+                for symbol in STOCK_SYMBOLS:
+                    if symbol in self.state["positions"]:
+                        continue
+                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                    results["signals"].append(sig)
+            else:
+                # 100% Capital available: Evaluate all stocks and pick the #1 HIGHEST confidence setup!
+                candidates = []
+                for symbol in STOCK_SYMBOLS:
+                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                    results["signals"].append(sig)
+                    if sig.get("viable"):
+                        candidates.append(sig)
+
+                if candidates:
+                    candidates.sort(key=lambda s: (s.get("probability", 0), s.get("expected_return", 0)), reverse=True)
+                    best = candidates[0]
+                    buy_act = self._execute_buy_order(
+                        best["symbol"], best["price"], best["allocation"],
+                        best["confidence"], best["expected_return"], best.get("cost_breakdown")
+                    )
+                    if buy_act:
+                        results["actions"].append(buy_act)
+                        # Mark this signal as BUY executed
+                        for s in results["signals"]:
+                            if s.get("symbol") == best["symbol"]:
+                                s["action"] = "BUY"
+                                s["reason"] = f"Single-Bullet #1 Pick: {s.get('probability', 0):.1%} Conf • Full Capital Allocated"
+        else:
+            # MULTI_SPLIT mode: up to MULTI_SPLIT_POSITIONS concurrent positions
+            for symbol in STOCK_SYMBOLS:
+                if symbol in self.state["positions"]:
+                    continue
+                if len(self.state["positions"]) >= MULTI_SPLIT_POSITIONS or self.state["available_capital"] < 1000:
+                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                    results["signals"].append(sig)
+                    continue
+
+                sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                results["signals"].append(sig)
+                if sig.get("viable"):
+                    buy_act = self._execute_buy_order(
+                        sig["symbol"], sig["price"], sig["allocation"],
+                        sig["confidence"], sig["expected_return"], sig.get("cost_breakdown")
+                    )
+                    if buy_act:
+                        results["actions"].append(buy_act)
+                        sig["action"] = "BUY"
 
         self.state["last_signals"] = results["signals"]
         self._save_state()
@@ -413,11 +470,11 @@ class NSEAutoTrader:
             "summary": self.get_portfolio_summary()
         }
 
-    def _evaluate_entry(self, symbol, feature_df, min_confidence=0.50):
-        """Evaluate whether to buy a stock."""
+    def _evaluate_signal_only(self, symbol, feature_df, min_confidence=0.48):
+        """Evaluate stock features and AI model gates without executing buy."""
         symbol_data = feature_df[feature_df["symbol"] == symbol].sort_values("timestamp")
         if len(symbol_data) < 50:
-            return {"symbol": symbol, "action": "SKIP", "reason": "insufficient_data"}
+            return {"symbol": symbol, "action": "SKIP", "viable": False, "reason": "insufficient_data"}
 
         window = symbol_data.tail(50)
         current_price = float(window["close"].iloc[-1])
@@ -425,11 +482,11 @@ class NSEAutoTrader:
         try:
             decision = self.engine.evaluate_state(window)
         except Exception as e:
-            return {"symbol": symbol, "action": "SKIP", "reason": f"model_error: {e}"}
+            return {"symbol": symbol, "action": "SKIP", "viable": False, "reason": f"model_error: {e}"}
 
         prob = float(decision["final_probability"])
         expected_return = float(decision.get("expected_return", 0))
-        confidence = prob  # Use probability as confidence proxy
+        confidence = prob
 
         signal = {
             "symbol": symbol,
@@ -437,8 +494,10 @@ class NSEAutoTrader:
             "price": current_price,
             "probability": prob,
             "expected_return": expected_return,
+            "confidence": confidence,
             "regime": decision.get("regime", "unknown"),
             "timestamp": datetime.now().isoformat(),
+            "viable": False,
         }
 
         # Gate 1: Minimum confidence
@@ -447,7 +506,7 @@ class NSEAutoTrader:
             signal["reason"] = f"low_confidence ({prob:.2%})"
             return signal
 
-        # Gate 2: High-Conviction Expected Return Filter (strictly filters noisy low-edge trades)
+        # Gate 2: High-Conviction Expected Return Filter
         if expected_return < MIN_EXPECTED_RETURN_PCT:
             signal["action"] = "SKIP"
             signal["reason"] = f"low_expected_return ({expected_return:.2%}) < {MIN_EXPECTED_RETURN_PCT:.2%}"
@@ -463,6 +522,7 @@ class NSEAutoTrader:
         viable, cost_breakdown = self.tax_engine.is_trade_viable(
             allocation, expected_return, min_net_pct=0.0
         )
+        signal["allocation"] = allocation
         signal["cost_breakdown"] = cost_breakdown
 
         if not viable:
@@ -473,10 +533,25 @@ class NSEAutoTrader:
             )
             return signal
 
-        # [OK] ALL GATES PASSED -- EXECUTE BUY
+        signal["viable"] = True
+        signal["action"] = "BUY_CANDIDATE"
+        signal["reason"] = (
+            f"viable_setup (predicted net: {cost_breakdown['net_return_pct']:.4f}%, "
+            f"confidence: {confidence:.2%})"
+        )
+        return signal
+
+    def _execute_buy_order(self, symbol, current_price, allocation, confidence, expected_return, cost_breakdown=None):
+        """Execute buy order, deduct capital, record position, and log."""
+        if allocation <= 0 or self.state["available_capital"] < (allocation * 0.9):
+            return None
+
+        # Clamp allocation to available capital
+        allocation = min(self.state["available_capital"], allocation)
         qty = allocation / current_price
         tp_price = current_price * (1 + PROFIT_TARGET_PCT)
         sl_price = current_price * (1 - MAX_GROSS_LOSS_PCT)
+
         self.state["positions"][symbol] = {
             "entry_price": current_price,
             "highest_price": current_price,
@@ -490,15 +565,7 @@ class NSEAutoTrader:
         }
         self.state["available_capital"] -= allocation
 
-        signal["action"] = "BUY"
-        signal["qty"] = qty
-        signal["invested"] = allocation
-        signal["reason"] = (
-            f"high_conviction (predicted net: {cost_breakdown['net_return_pct']:.4f}%, "
-            f"confidence: {confidence:.2%})"
-        )
-
-        self._log_trade({
+        trade_record = {
             "action": "BUY",
             "symbol": symbol,
             "company": STOCK_UNIVERSE.get(symbol, symbol),
@@ -507,13 +574,32 @@ class NSEAutoTrader:
             "invested": allocation,
             "confidence": confidence,
             "predicted_return": expected_return,
+            "target_tp": tp_price,
+            "stop_loss": sl_price,
             "timestamp": datetime.now().isoformat(),
-        })
+        }
+        self._log_trade(trade_record)
 
-        print(f"   BUY {symbol} @ Rs.{current_price:.2f} | Qty: {qty:.2f} | "
-              f"Invested: Rs.{allocation:.2f} | Confidence: {confidence:.2%} | Target: Rs.{tp_price:.2f}")
+        print(
+            f"  [BUY] {symbol} @ Rs.{current_price:.2f} | Qty: {qty:.2f} | "
+            f"Invested: Rs.{allocation:.2f} | Confidence: {confidence:.2%} | "
+            f"TP (+{PROFIT_TARGET_PCT*100:.1f}%): Rs.{tp_price:.2f} | SL: Rs.{sl_price:.2f}"
+        )
+        return trade_record
 
-        return signal
+    def _evaluate_entry(self, symbol, feature_df, min_confidence=0.50):
+        """Backward-compatible entry evaluator."""
+        sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+        if sig.get("viable"):
+            action = self._execute_buy_order(
+                sig["symbol"], sig["price"], sig["allocation"],
+                sig["confidence"], sig["expected_return"], sig.get("cost_breakdown")
+            )
+            if action:
+                sig["action"] = "BUY"
+                sig["qty"] = action["qty"]
+                sig["invested"] = action["invested"]
+        return sig
 
     def _check_exit(self, symbol, feature_df):
         """Check if an existing position should be sold (Take Profit, Trailing Stop, Stop Loss, or EOD Square-Off)."""
@@ -733,6 +819,7 @@ class NSEAutoTrader:
             "rolling_accuracy": round(self.get_rolling_accuracy() * 100, 1),
             "active_positions": len(self.state["positions"]),
             "is_trading": self.state.get("is_trading", False),
+            "strategy_mode": self.state.get("strategy_mode", STRATEGY_MODE),
             "last_scan": self.state.get("last_scan"),
             "last_retrain": self.state.get("last_retrain"),
         }

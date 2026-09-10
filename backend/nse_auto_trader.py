@@ -29,7 +29,13 @@ from database.stocks_config import (
     STOCK_SYMBOLS,
     STOCK_UNIVERSE,
     MIN_NET_PROFIT_PCT,
+    MIN_EXPECTED_RETURN_PCT,
+    PROFIT_TARGET_PCT,
     MAX_GROSS_LOSS_PCT,
+    TRAILING_STOP_ACTIVATION_PCT,
+    TRAILING_STOP_DISTANCE_PCT,
+    AUTO_EOD_SQUAREOFF_HOUR,
+    AUTO_EOD_SQUAREOFF_MINUTE,
     DEFAULT_CAPITAL,
     POSITION_SIZING,
     SCAN_INTERVAL_SECONDS,
@@ -293,28 +299,49 @@ class NSEAutoTrader:
         # Group by timestamp chronologically
         for ts, group in df_subset.groupby("timestamp", sort=True):
             price_map = group.set_index("symbol")["close"].to_dict()
+            high_map = group.set_index("symbol")["high"].to_dict() if "high" in group.columns else price_map
+            low_map = group.set_index("symbol")["low"].to_dict() if "low" in group.columns else price_map
             
-            # 1. Check exits
+            # 1. Check exits (Take Profit +2.0%, Trailing Stop, Stop Loss, EOD Square-Off)
             for symbol in list(self.state["positions"].keys()):
                 if symbol not in price_map:
                     continue
                 curr_price = float(price_map[symbol])
+                curr_high = float(high_map.get(symbol, curr_price))
+                curr_low = float(low_map.get(symbol, curr_price))
                 pos = self.state["positions"][symbol]
-                gross_return = (curr_price - pos["entry_price"]) / pos["entry_price"]
-                
-                # Stop loss
-                if gross_return < -MAX_GROSS_LOSS_PCT:
-                    action = self._execute_sell(symbol, curr_price, gross_return, "STOP_LOSS", exit_time=ts)
+                entry_price = float(pos["entry_price"])
+                gross_return = (curr_price - entry_price) / entry_price if entry_price > 0 else 0.0
+
+                # Update watermark
+                highest_price = max(float(pos.get("highest_price", entry_price)), curr_price, curr_high)
+                pos["highest_price"] = highest_price
+
+                gain_from_entry = (highest_price - entry_price) / entry_price
+                if gain_from_entry >= TRAILING_STOP_ACTIVATION_PCT:
+                    breakeven_price = entry_price * 1.0025  # Breakeven + roundtrip fees
+                    trail_price = highest_price * (1 - TRAILING_STOP_DISTANCE_PCT)
+                    pos["sl_price"] = max(float(pos.get("sl_price", entry_price * (1 - MAX_GROSS_LOSS_PCT))), trail_price, breakeven_price)
+
+                tp_price = float(pos.get("tp_price", entry_price * (1 + PROFIT_TARGET_PCT)))
+                sl_price = float(pos.get("sl_price", entry_price * (1 - MAX_GROSS_LOSS_PCT)))
+                is_eod = (hasattr(ts, 'hour') and ((ts.hour == AUTO_EOD_SQUAREOFF_HOUR and ts.minute >= AUTO_EOD_SQUAREOFF_MINUTE) or ts.hour > AUTO_EOD_SQUAREOFF_HOUR))
+
+                if curr_price >= tp_price or curr_high >= tp_price:
+                    exec_p = max(curr_price, tp_price)
+                    ret = (exec_p - entry_price) / entry_price if entry_price > 0 else 0.0
+                    action = self._execute_sell(symbol, exec_p, ret, "TAKE_PROFIT", exit_time=ts)
                     executed_trades.append(action)
-                # Take profit
-                elif gross_return > 0:
-                    is_profitable, bd = self.tax_engine.is_exit_profitable(
-                        pos["invested"], gross_return, min_net_pct=MIN_NET_PROFIT_PCT
-                    )
-                    if is_profitable:
-                        action = self._execute_sell(symbol, curr_price, gross_return, "TAKE_PROFIT", bd, exit_time=ts)
-                        executed_trades.append(action)
-                        
+                elif curr_price <= sl_price or curr_low <= sl_price:
+                    exec_p = min(curr_price, sl_price)
+                    ret = (exec_p - entry_price) / entry_price if entry_price > 0 else 0.0
+                    exit_reason = "TRAILING_STOP" if gain_from_entry >= TRAILING_STOP_ACTIVATION_PCT else "STOP_LOSS"
+                    action = self._execute_sell(symbol, exec_p, ret, exit_reason, exit_time=ts)
+                    executed_trades.append(action)
+                elif is_eod:
+                    action = self._execute_sell(symbol, curr_price, gross_return, "EOD_SQUAREOFF", exit_time=ts)
+                    executed_trades.append(action)
+
             # 2. Check entries
             for _, row in group.iterrows():
                 symbol = row["symbol"]
@@ -322,37 +349,45 @@ class NSEAutoTrader:
                     continue
                 if self.state["available_capital"] < 1000:
                     break
-                    
+
                 prob = float(row["pred_prob"])
                 exp_ret = float(row["pred_ret"])
                 curr_price = float(row["close"])
-                
-                if prob >= min_confidence and exp_ret > 0.0005:
+
+                # High-conviction filters
+                if prob >= min_confidence and exp_ret >= MIN_EXPECTED_RETURN_PCT:
                     alloc = self._get_allocation(prob, min_confidence=min_confidence)
                     if alloc > 0:
-                        qty = alloc / curr_price
-                        self.state["positions"][symbol] = {
-                            "entry_price": curr_price,
-                            "qty": qty,
-                            "invested": alloc,
-                            "entry_time": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
-                            "confidence": prob,
-                            "predicted_return": exp_ret,
-                        }
-                        self.state["available_capital"] -= alloc
-                        trade_rec = {
-                            "action": "BUY",
-                            "symbol": symbol,
-                            "company": STOCK_UNIVERSE.get(symbol, symbol),
-                            "price": curr_price,
-                            "qty": qty,
-                            "invested": alloc,
-                            "confidence": prob,
-                            "predicted_return": exp_ret,
-                            "timestamp": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
-                        }
-                        self._log_trade(trade_rec)
-                        executed_trades.append(trade_rec)
+                        viable, bd = self.tax_engine.is_trade_viable(
+                            alloc, exp_ret, min_net_pct=MIN_NET_PROFIT_PCT
+                        )
+                        if viable:
+                            qty = alloc / curr_price
+                            self.state["positions"][symbol] = {
+                                "entry_price": curr_price,
+                                "highest_price": curr_price,
+                                "tp_price": curr_price * (1 + PROFIT_TARGET_PCT),
+                                "sl_price": curr_price * (1 - MAX_GROSS_LOSS_PCT),
+                                "qty": qty,
+                                "invested": alloc,
+                                "entry_time": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                                "confidence": prob,
+                                "predicted_return": exp_ret,
+                            }
+                            self.state["available_capital"] -= alloc
+                            trade_rec = {
+                                "action": "BUY",
+                                "symbol": symbol,
+                                "company": STOCK_UNIVERSE.get(symbol, symbol),
+                                "price": curr_price,
+                                "qty": qty,
+                                "invested": alloc,
+                                "confidence": prob,
+                                "predicted_return": exp_ret,
+                                "timestamp": ts.isoformat() if hasattr(ts, 'isoformat') else str(ts),
+                            }
+                            self._log_trade(trade_rec)
+                            executed_trades.append(trade_rec)
                             
         self.state["last_scan"] = datetime.now().isoformat()
         self._save_state()
@@ -397,7 +432,13 @@ class NSEAutoTrader:
             signal["reason"] = f"low_confidence ({prob:.2%})"
             return signal
 
-        # Gate 2: Check if predicted return is viable after all costs
+        # Gate 2: High-Conviction Expected Return Filter (strictly filters noisy low-edge trades)
+        if expected_return < MIN_EXPECTED_RETURN_PCT:
+            signal["action"] = "SKIP"
+            signal["reason"] = f"low_expected_return ({expected_return:.2%}) < {MIN_EXPECTED_RETURN_PCT:.2%}"
+            return signal
+
+        # Gate 3: Check if predicted return is viable after all costs
         allocation = self._get_allocation(confidence, min_confidence=min_confidence)
         if allocation <= 0:
             signal["action"] = "SKIP"
@@ -419,8 +460,13 @@ class NSEAutoTrader:
 
         # [OK] ALL GATES PASSED -- EXECUTE BUY
         qty = allocation / current_price
+        tp_price = current_price * (1 + PROFIT_TARGET_PCT)
+        sl_price = current_price * (1 - MAX_GROSS_LOSS_PCT)
         self.state["positions"][symbol] = {
             "entry_price": current_price,
+            "highest_price": current_price,
+            "tp_price": tp_price,
+            "sl_price": sl_price,
             "qty": qty,
             "invested": allocation,
             "entry_time": datetime.now().isoformat(),
@@ -433,7 +479,7 @@ class NSEAutoTrader:
         signal["qty"] = qty
         signal["invested"] = allocation
         signal["reason"] = (
-            f"viable (predicted net: {cost_breakdown['net_return_pct']:.4f}%, "
+            f"high_conviction (predicted net: {cost_breakdown['net_return_pct']:.4f}%, "
             f"confidence: {confidence:.2%})"
         )
 
@@ -450,12 +496,12 @@ class NSEAutoTrader:
         })
 
         print(f"   BUY {symbol} @ Rs.{current_price:.2f} | Qty: {qty:.2f} | "
-              f"Invested: Rs.{allocation:.2f} | Confidence: {confidence:.2%}")
+              f"Invested: Rs.{allocation:.2f} | Confidence: {confidence:.2%} | Target: Rs.{tp_price:.2f}")
 
         return signal
 
     def _check_exit(self, symbol, feature_df):
-        """Check if an existing position should be sold."""
+        """Check if an existing position should be sold (Take Profit, Trailing Stop, Stop Loss, or EOD Square-Off)."""
         pos = self.state["positions"].get(symbol)
         if not pos:
             return None
@@ -465,22 +511,43 @@ class NSEAutoTrader:
             return None
 
         current_price = float(symbol_data["close"].iloc[-1])
-        entry_price = pos["entry_price"]
-        gross_return = (current_price - entry_price) / entry_price
+        high_price = float(symbol_data["high"].iloc[-1]) if "high" in symbol_data.columns else current_price
+        low_price = float(symbol_data["low"].iloc[-1]) if "low" in symbol_data.columns else current_price
+        entry_price = float(pos["entry_price"])
+        gross_return = (current_price - entry_price) / entry_price if entry_price > 0 else 0.0
 
-        # Check STOP-LOSS: exit if gross loss exceeds threshold
-        if gross_return < -MAX_GROSS_LOSS_PCT:
-            return self._execute_sell(symbol, current_price, gross_return, "STOP_LOSS")
+        # Update peak watermark price reached during the trade
+        highest_price = max(float(pos.get("highest_price", entry_price)), current_price, high_price)
+        pos["highest_price"] = highest_price
 
-        # Check TAKE-PROFIT: exit if net profit > 0.5% after all costs
-        if gross_return > 0:
-            is_profitable, breakdown = self.tax_engine.is_exit_profitable(
-                pos["invested"], gross_return, min_net_pct=MIN_NET_PROFIT_PCT
-            )
-            if is_profitable:
-                return self._execute_sell(
-                    symbol, current_price, gross_return, "TAKE_PROFIT", breakdown
-                )
+        # Dynamic Trailing Stop Ratchet:
+        # If price advanced >= TRAILING_STOP_ACTIVATION_PCT (+0.80%), ratchet stop loss
+        gain_from_entry = (highest_price - entry_price) / entry_price
+        if gain_from_entry >= TRAILING_STOP_ACTIVATION_PCT:
+            breakeven_price = entry_price * 1.0025  # Breakeven + all round-trip fees
+            trail_price = highest_price * (1 - TRAILING_STOP_DISTANCE_PCT)
+            pos["sl_price"] = max(float(pos.get("sl_price", entry_price * (1 - MAX_GROSS_LOSS_PCT))), trail_price, breakeven_price)
+
+        # 1. Check TAKE-PROFIT (Upper Target, e.g. +2.0%)
+        tp_price = float(pos.get("tp_price", entry_price * (1 + PROFIT_TARGET_PCT)))
+        if current_price >= tp_price or high_price >= tp_price:
+            exec_p = max(current_price, tp_price)
+            ret = (exec_p - entry_price) / entry_price
+            return self._execute_sell(symbol, exec_p, ret, "TAKE_PROFIT")
+
+        # 2. Check TRAILING-STOP or STOP-LOSS
+        sl_price = float(pos.get("sl_price", entry_price * (1 - MAX_GROSS_LOSS_PCT)))
+        if current_price <= sl_price or low_price <= sl_price:
+            exec_p = min(current_price, sl_price)
+            ret = (exec_p - entry_price) / entry_price
+            exit_reason = "TRAILING_STOP" if gain_from_entry >= TRAILING_STOP_ACTIVATION_PCT else "STOP_LOSS"
+            return self._execute_sell(symbol, exec_p, ret, exit_reason)
+
+        # 3. Check EOD AUTO SQUARE-OFF (Intraday Gap-Down Protection at 3:20 PM IST)
+        now = datetime.now()
+        is_eod = (now.hour == AUTO_EOD_SQUAREOFF_HOUR and now.minute >= AUTO_EOD_SQUAREOFF_MINUTE) or (now.hour > AUTO_EOD_SQUAREOFF_HOUR)
+        if is_eod:
+            return self._execute_sell(symbol, current_price, gross_return, "EOD_SQUAREOFF")
 
         return None
 
@@ -697,19 +764,26 @@ class NSEAutoTrader:
             except Exception:
                 hold_str = "Active"
 
-            tp_price = entry_p * 1.015  # 1.5% TP
-            sl_price = entry_p * (1 - MAX_GROSS_LOSS_PCT)
+            tp_price = float(pos.get("tp_price", entry_p * (1 + PROFIT_TARGET_PCT)))
+            sl_price = float(pos.get("sl_price", entry_p * (1 - MAX_GROSS_LOSS_PCT)))
+            highest_p = float(pos.get("highest_price", entry_p))
+            gain_from_entry = (highest_p - entry_p) / entry_p if entry_p > 0 else 0.0
 
-            dist_to_tp = ((tp_price - curr_p) / curr_p) * 100
-            dist_to_sl = ((curr_p - sl_price) / curr_p) * 100
+            dist_to_tp = ((tp_price - curr_p) / curr_p) * 100 if curr_p > 0 else 0.0
+            dist_to_sl = ((curr_p - sl_price) / curr_p) * 100 if curr_p > 0 else 0.0
 
-            note = f"Trailing to TP ({dist_to_tp:+.2f}% away) • SL Buffer: {dist_to_sl:.2f}%"
+            is_trailing = gain_from_entry >= TRAILING_STOP_ACTIVATION_PCT
+            badge_status = "🛡 HOLDING (TRAIL LOCKED)" if is_trailing else "🛡 HOLDING"
+            if is_trailing:
+                note = f"Trailing Stop active @ ₹{sl_price:,.2f} (Locking gains) • Peak: ₹{highest_p:,.2f} (+{gain_from_entry*100:.2f}%) • TP: {dist_to_tp:+.2f}%"
+            else:
+                note = f"Seeking Target ({dist_to_tp:+.2f}% away) • Stop Loss buffer: {dist_to_sl:.2f}%"
 
             feed.append({
                 "Timestamp": pos.get("entry_time", now.isoformat())[:19].replace("T", " "),
                 "Symbol": symbol.replace(".NS", ""),
                 "Company": STOCK_UNIVERSE.get(symbol, symbol),
-                "Action / Status": "🛡 HOLDING",
+                "Action / Status": badge_status,
                 "Entry Price": f"₹{entry_p:,.2f}",
                 "Current / Exit": f"₹{curr_p:,.2f}",
                 "Qty": f"{qty:.2f}",
@@ -719,8 +793,8 @@ class NSEAutoTrader:
                 "Net ROI %": f"{bd['net_return_pct']:+.3f}%",
                 "Fees & Tax": f"₹{bd['total_cost'] + bd['tax']:,.2f}",
                 "Hold Time": hold_str,
-                "Target (TP)": f"₹{tp_price:,.2f} (+1.5%)",
-                "Stop Loss (SL)": f"₹{sl_price:,.2f} (-0.8%)",
+                "Target (TP)": f"₹{tp_price:,.2f} (+{PROFIT_TARGET_PCT*100:.1f}%)",
+                "Stop Loss (SL)": f"₹{sl_price:,.2f}" if is_trailing else f"₹{sl_price:,.2f} (-{MAX_GROSS_LOSS_PCT*100:.1f}%)",
                 "AI Conf": f"{pos.get('confidence', 0.8)*100:.1f}%",
                 "Details / Reason": note,
                 "_status_code": "HOLDING",
@@ -754,8 +828,8 @@ class NSEAutoTrader:
                     "Net ROI %": "—",
                     "Fees & Tax": "—",
                     "Hold Time": "Entry",
-                    "Target (TP)": f"₹{p*1.015:,.2f} (+1.5%)",
-                    "Stop Loss (SL)": f"₹{p*(1-MAX_GROSS_LOSS_PCT):,.2f} (-0.8%)",
+                    "Target (TP)": f"₹{p*(1+PROFIT_TARGET_PCT):,.2f} (+{PROFIT_TARGET_PCT*100:.1f}%)",
+                    "Stop Loss (SL)": f"₹{p*(1-MAX_GROSS_LOSS_PCT):,.2f} (-{MAX_GROSS_LOSS_PCT*100:.1f}%)",
                     "AI Conf": f"{conf*100:.1f}%",
                     "Details / Reason": "Buy order executed via AI Ensemble Signal",
                     "_status_code": "BOUGHT",
@@ -771,7 +845,16 @@ class NSEAutoTrader:
                 fees = float(t.get("total_cost", 0)) + float(t.get("tax", 0))
                 roi = float(t.get("net_return_pct", 0))
 
-                badge = "🔴 SOLD (TP)" if reason == "TAKE_PROFIT" else "🔴 SOLD (SL)" if reason == "STOP_LOSS" else f"🔴 SOLD ({reason})"
+                if reason == "TAKE_PROFIT":
+                    badge = "🟢 SOLD (TP +2%)"
+                elif reason == "TRAILING_STOP":
+                    badge = "🟢 SOLD (TRAIL STOP)"
+                elif reason == "EOD_SQUAREOFF":
+                    badge = "🟡 SOLD (EOD CLOSE)"
+                elif reason == "STOP_LOSS":
+                    badge = "🔴 SOLD (STOP LOSS)"
+                else:
+                    badge = f"🔴 SOLD ({reason})"
 
                 feed.append({
                     "Timestamp": ts_str,
@@ -787,7 +870,7 @@ class NSEAutoTrader:
                     "Net ROI %": f"{roi:+.3f}%",
                     "Fees & Tax": f"₹{fees:,.2f}",
                     "Hold Time": t.get("hold_duration", "Closed"),
-                    "Target (TP)": f"₹{entry_p*1.015:,.2f}",
+                    "Target (TP)": f"₹{entry_p*(1+PROFIT_TARGET_PCT):,.2f}",
                     "Stop Loss (SL)": f"₹{entry_p*(1-MAX_GROSS_LOSS_PCT):,.2f}",
                     "AI Conf": "Exited",
                     "Details / Reason": f"Exit triggered: {reason.replace('_', ' ').title()}",
@@ -823,7 +906,7 @@ class NSEAutoTrader:
                 "Net ROI %": f"Exp: {exp_ret*100:+.2f}%",
                 "Fees & Tax": "—",
                 "Hold Time": "Scan",
-                "Target (TP)": f"₹{p*1.015:,.2f}",
+                "Target (TP)": f"₹{p*(1+PROFIT_TARGET_PCT):,.2f}",
                 "Stop Loss (SL)": f"₹{p*(1-MAX_GROSS_LOSS_PCT):,.2f}",
                 "AI Conf": f"{prob*100:.1f}%",
                 "Details / Reason": reason.replace("_", " ").title() if reason else "Evaluated in live cycle",

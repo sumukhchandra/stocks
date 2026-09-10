@@ -18,9 +18,15 @@ STOCK_UNIVERSE = {
 
 STOCK_SYMBOLS = list(STOCK_UNIVERSE.keys())
 
-# --- Trading Thresholds ------------------------------------------------------
-MIN_NET_PROFIT_PCT = 0.0005         # 0.05% minimum net profit after ALL costs to enter/exit
-MAX_GROSS_LOSS_PCT = 0.003          # 0.3% max gross loss before stop-loss triggers
+# --- Trading Thresholds & Profit Optimization -------------------------------
+MIN_NET_PROFIT_PCT = 0.0060         # 0.60% minimum net profit after ALL costs to consider trade viable
+MIN_EXPECTED_RETURN_PCT = 0.0080    # 0.80% minimum predicted return from 4-model ensemble (filters noise)
+PROFIT_TARGET_PCT = 0.020           # 2.0% initial Take-Profit target (allows winners to run)
+MAX_GROSS_LOSS_PCT = 0.008          # 0.80% initial Stop-Loss limit
+TRAILING_STOP_ACTIVATION_PCT = 0.008 # Once price reaches +0.80%, stop-loss ratchets to Breakeven (+0.25%)
+TRAILING_STOP_DISTANCE_PCT = 0.005  # Trails 0.50% below peak watermark to lock in maximum profit
+AUTO_EOD_SQUAREOFF_HOUR = 15        # Auto square-off at 3:20 PM IST to eliminate overnight gap-down risk
+AUTO_EOD_SQUAREOFF_MINUTE = 20
 DEFAULT_CAPITAL = 100000            # Default starting capital (INR) -- overridable from UI
 
 # --- Position Sizing (dynamic, confidence-based) -----------------------------

@@ -56,13 +56,15 @@ class SimulationEngine:
     def run_simulation(
         self,
         symbols=None,
-        n_days=5,
+        n_days=None,
         target_date=None,
         starting_capital=100000.0,
         min_confidence=0.55,
-        min_expected_return=0.0005,
-        profit_target_pct=0.015,
+        min_expected_return=0.008,
+        profit_target_pct=0.020,
         stop_loss_pct=0.008,
+        trailing_activation_pct=0.008,
+        trailing_distance_pct=0.005,
         max_open_positions=4,
         max_allocation_pct=0.20,
     ):
@@ -75,9 +77,11 @@ class SimulationEngine:
             target_date: specific date to simulate (overrides n_days)
             starting_capital: initial portfolio cash in INR
             min_confidence: minimum AI probability to open trade (e.g. 0.55 = 55%)
-            min_expected_return: minimum predicted gross return (e.g. 0.0005 = 0.05%)
-            profit_target_pct: profit take threshold (e.g. 0.015 = 1.5%)
+            min_expected_return: minimum predicted gross return (e.g. 0.008 = 0.8%)
+            profit_target_pct: profit take threshold (e.g. 0.020 = 2.0%)
             stop_loss_pct: stop loss threshold (e.g. 0.008 = 0.8%)
+            trailing_activation_pct: gain needed to activate trailing stop (e.g. 0.008 = +0.8%)
+            trailing_distance_pct: distance to trail behind peak watermark (e.g. 0.005 = 0.5%)
             max_open_positions: max concurrent active trades
             max_allocation_pct: max % of available capital per trade
         """
@@ -166,26 +170,37 @@ class SimulationEngine:
                 curr_high = float(high_map.get(symbol, curr_close))
                 curr_low = float(low_map.get(symbol, curr_close))
 
-                # Check Take Profit
+                # Update peak watermark price reached during trade
+                highest = max(pos.get("highest_price", pos["entry_price"]), curr_close, curr_high)
+                pos["highest_price"] = highest
+
+                # Dynamic Trailing Stop Ratchet:
+                # If price advanced >= trailing_activation_pct (+0.80%), ratchet stop loss
+                gain_from_entry = (highest - pos["entry_price"]) / pos["entry_price"]
+                if gain_from_entry >= trailing_activation_pct:
+                    breakeven_p = pos["entry_price"] * 1.0025  # Breakeven + round-trip taxes & fees
+                    trail_p = highest * (1.0 - trailing_distance_pct)
+                    pos["sl_price"] = max(pos["sl_price"], trail_p, breakeven_p)
+
                 tp_price = pos["tp_price"]
                 sl_price = pos["sl_price"]
                 hit_tp = curr_high >= tp_price
                 hit_sl = curr_low <= sl_price
                 hit_time = current_time >= pos["expiration"]
-                is_eod = current_time == timestamps[-1] or (current_time.hour == 15 and current_time.minute >= 25)
+                is_eod = current_time == timestamps[-1] or (current_time.hour == 15 and current_time.minute >= 20)
 
                 exit_price = None
                 exit_reason = None
 
                 if hit_tp:
-                    exit_price = tp_price
+                    exit_price = max(curr_close, tp_price)
                     exit_reason = "TAKE_PROFIT"
                 elif hit_sl:
-                    exit_price = sl_price
-                    exit_reason = "STOP_LOSS"
+                    exit_price = min(curr_close, sl_price)
+                    exit_reason = "TRAILING_STOP" if gain_from_entry >= trailing_activation_pct else "STOP_LOSS"
                 elif is_eod:
                     exit_price = curr_close
-                    exit_reason = "EOD_CLOSE"
+                    exit_reason = "EOD_SQUAREOFF"
                 elif hit_time:
                     exit_price = curr_close
                     exit_reason = "TIME_EXPIRY"
@@ -248,16 +263,12 @@ class SimulationEngine:
                         alloc = min(cash * 0.95, max(1000.0, avail))
                         qty = alloc / curr_price
 
-                        # Dynamic ATR stop / target if atr_14 present
-                        atr = float(row.get("atr_14", curr_price * 0.005))
-                        if np.isnan(atr) or atr <= 0:
-                            atr = curr_price * 0.005
-
                         tp = curr_price * (1 + profit_target_pct)
                         sl = curr_price * (1 - stop_loss_pct)
 
                         active_positions[sym] = {
                             "entry_price": curr_price,
+                            "highest_price": curr_price,
                             "qty": qty,
                             "invested": alloc,
                             "tp_price": tp,

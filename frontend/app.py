@@ -616,48 +616,52 @@ elif page == "🔴 Live Trading":
             last_scan_display = str(last_scan_str)[:19]
 
     st.markdown("""
-    <div style="margin-bottom: 20px;">
-        <div style="font-size: 1.6rem; font-weight: 800; color: #fff;">🔴 Live Trading Execution & Capital Management</div>
-        <div style="font-size: 0.9rem; color: #94a3b8;">
-            Institutional high-frequency paper execution with continuous background operation, real-time price monitoring, manual capital adjustment, and granular trade audit logs.
-        </div>
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 1.6rem; font-weight: 800; color: #fff;">🔴 Live Trading</div>
     </div>
     """, unsafe_allow_html=True)
 
-    # 1. Background Execution & Persistence Status Banner
+    # 1. Top Metrics Bar: Total, Invested, Remaining, Profit or Loss
+    pnl_val = summary.get("total_net_pnl", 0.0)
+    pnl_pct_val = (pnl_val / summary["starting_capital"] * 100) if summary.get("starting_capital") else 0.0
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total Capital", f"₹{summary['total_capital']:,.2f}")
+    m2.metric("Invested", f"₹{summary['invested_capital']:,.2f}")
+    m3.metric("Remaining", f"₹{summary['available_capital']:,.2f}")
+    m4.metric("Profit / Loss", f"₹{pnl_val:+,.2f}", f"{pnl_pct_val:+.2f}%")
+
+    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+
+    # 2. Money Adjustment & Strategy Execution
+    current_strat = trader.state.get("strategy_mode", "SINGLE_BULLET")
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    b_col1, b_col2 = st.columns([6, 4])
-    with b_col1:
+    st.markdown("<div class='card-title'>💰 Money Adjustment & Execution Strategy</div>", unsafe_allow_html=True)
+
+    ctrl_col1, ctrl_col2 = st.columns([6, 4])
+    with ctrl_col1:
         if is_tr_active:
             st.markdown(f"""
-            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                <span class="status-pill status-live"><span class="pulsing-dot"></span> AUTO-TRADER ACTIVE (DAEMON TASK)</span>
-                <span style="font-size: 0.85rem; color: #00f098; font-weight: 600;">ARMED FOR CONTINUOUS EXECUTION</span>
-            </div>
-            <div style="font-size: 0.82rem; color: #94a3b8; margin-top: 8px;">
-                ⚡ <b>Persistent Background Execution:</b> The trading engine operates in a persistent daemon process. Changing pages, running simulations, or closing your browser will <b>NOT</b> stop background trading or order execution!
-                <br><span style="color: #00e5ff; font-family: 'JetBrains Mono', monospace; font-size: 0.78rem;">Last Scan: {last_scan_display} {seconds_ago_str} • Background Daemon interval: 180s</span>
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
+                <span class="status-pill status-live"><span class="pulsing-dot"></span> AUTO-TRADER ACTIVE</span>
+                <span style="font-size: 0.82rem; color: #94a3b8;">Last scan: {last_scan_display} {seconds_ago_str}</span>
             </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown("""
-            <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
                 <span class="status-pill status-closed">AUTO-TRADER IDLE</span>
-                <span style="font-size: 0.85rem; color: #94a3b8; font-weight: 600;">STANDBY MODE</span>
-            </div>
-            <div style="font-size: 0.82rem; color: #94a3b8; margin-top: 8px;">
-                Click <b>"Start Live Auto-Trader"</b> to arm the system. Once started, trading continues automatically in the background even when you navigate to other pages.
+                <span style="font-size: 0.82rem; color: #94a3b8;">Click Start to begin continuous auto-trading.</span>
             </div>
             """, unsafe_allow_html=True)
-    with b_col2:
-        col_btn1, col_btn2 = st.columns(2)
-        with col_btn1:
+    with ctrl_col2:
+        b_c1, b_c2 = st.columns(2)
+        with b_c1:
             if not is_tr_active:
                 if st.button("▶️ Start Auto-Trader", use_container_width=True, type="primary"):
                     trader.state["is_trading"] = True
                     trader._save_state()
                     threading.Thread(target=trader.run_loop, daemon=True).start()
-                    st.success("🟢 Auto-Trader armed in background thread!")
+                    st.success("🟢 Auto-Trader armed!")
                     st.rerun()
             else:
                 if st.button("⏹️ Pause Auto-Trader", use_container_width=True):
@@ -665,21 +669,17 @@ elif page == "🔴 Live Trading":
                     trader._save_state()
                     st.info("Auto-Trader paused.")
                     st.rerun()
-        with col_btn2:
-            if st.button("⚡ Instant Scan", use_container_width=True, help="Immediately evaluate orderflow across all 10 stocks right now"):
+        with b_c2:
+            if st.button("⚡ Instant Scan", use_container_width=True, help="Scan all 10 stocks now"):
                 with st.spinner("Scanning live market orderflow..."):
                     res = trader.run_single_cycle(min_confidence=0.48)
                 st.success(f"Scan complete — {len(res.get('actions', []))} orders triggered")
                 st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
-    # 1B. Strategy Mode Controller & Capital Manager
-    current_strat = trader.state.get("strategy_mode", "SINGLE_BULLET")
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title' style='margin-bottom:8px;'>⚙️ Execution Strategy & Compounding Mode</div>", unsafe_allow_html=True)
+    st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
 
-    col_strat_radio, col_strat_info = st.columns([5.5, 4.5])
-    with col_strat_radio:
+    strat_col1, strat_col2 = st.columns([5.5, 4.5])
+    with strat_col1:
         strat_choice = st.radio(
             "Select Strategy",
             [
@@ -694,183 +694,27 @@ elif page == "🔴 Live Trading":
             trader.set_strategy_mode(new_mode)
             st.rerun()
 
-        sub_cap1, sub_cap2 = st.columns([2.2, 1.3])
-        with sub_cap1:
-            new_cap = st.number_input("Portfolio Capital (₹)", min_value=5000, max_value=5000000, value=int(summary['total_capital']), step=5000)
-        with sub_cap2:
-            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
-            if st.button("💾 Apply Capital", use_container_width=True):
-                ok, msg = trader.set_capital(new_cap)
-                if ok:
-                    st.success(msg)
-                    st.rerun()
-                else:
-                    st.error(msg)
-
-    with col_strat_info:
+    with strat_col2:
         if current_strat == "SINGLE_BULLET":
-            st.markdown(f"""
-            <div style="background: rgba(0, 240, 152, 0.06); border: 1px solid rgba(0, 240, 152, 0.25); border-radius: 10px; padding: 12px 16px; font-size: 0.83rem; line-height: 1.5;">
-                <b style="color: #00f098; font-size: 0.92rem;">🎯 Plan 1: Single-Bullet Compounding Active</b><br>
-                • <b>Capital per Trade:</b> <b style="color: #fff;">100% (₹{summary['available_capital']:,.0f})</b> into the #1 highest-conviction AI setup.<br>
-                • <b>Take-Profit Target:</b> <b style="color: #00f098;">+1.10%</b> (Guarantees <b style="color: #00f098;">≥ +0.80% net profit</b> after all Zerodha brokerage, STT & taxes).<br>
-                • <b>Execution:</b> Holds 1 trade at a time $\to$ compounds net profit $\to$ repeats for <b>10 to 15 sequential trades/day</b>.
-            </div>
-            """, unsafe_allow_html=True)
+            st.caption("🎯 **Plan 1 (Single-Bullet):** 100% capital into the #1 AI setup. TP +1.10% (≥0.80% net post-tax). 10–15 trades/day.")
         else:
-            st.markdown(f"""
-            <div style="background: rgba(0, 229, 255, 0.06); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 10px; padding: 12px 16px; font-size: 0.83rem; line-height: 1.5;">
-                <b style="color: #00e5ff; font-size: 0.92rem;">🧺 Plan 2: Multi-Basket Split Compounding Active</b><br>
-                • <b>Capital per Trade:</b> Split across 3 concurrent positions (~₹{summary['available_capital']/3:,.0f} each).<br>
-                • <b>Take-Profit Target:</b> <b style="color: #00e5ff;">+1.10%</b> (Guarantees <b style="color: #00e5ff;">≥ +0.80% net profit</b> post-tax per trade).<br>
-                • <b>Execution:</b> Multi-stock diversification targeting 5% total daily portfolio growth.
-            </div>
-            """, unsafe_allow_html=True)
+            st.caption("🧺 **Plan 2 (Multi-Basket):** Capital split across 3 concurrent positions (~33% each). Target 5% daily gain.")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("<hr style='margin: 10px 0; border-color: var(--border-color);'>", unsafe_allow_html=True)
 
-    # 2. Live AI Session Radar & Strategy Defense Status Card
-    signals = trader.state.get("last_signals", [])
-    regimes = [s.get("regime", "unknown") for s in signals if s.get("regime")]
-    dominant_regime = max(set(regimes), key=regimes.count) if regimes else "trending_bear"
-    regime_label = (
-        "🐻 TRENDING BEAR (Gap-Down Defense)" if "bear" in dominant_regime
-        else "⚡ HIGH VOLATILITY" if "volatility" in dominant_regime
-        else "🐂 TRENDING BULL" if "bull" in dominant_regime
-        else "⚖️ MEAN REVERTING"
-    )
-
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    r_top1, r_top2 = st.columns([7, 3])
-    with r_top1:
-        st.markdown(f"""
-        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px;">
-            <div class="card-title" style="margin: 0;">🛡️ High-Yield Profit Optimizer (≥ 0.8% Net After All Taxes)</div>
-            <span class="status-pill status-live"><span class="pulsing-dot"></span> REGIME: {regime_label}</span>
-        </div>
-        <div style="font-size: 0.85rem; color: #94a3b8; line-height: 1.5;">
-            <b>Automated Compounding & Risk Gates Active:</b>
-            <ul style="margin: 4px 0 6px 18px; padding: 0;">
-                <li><b>Net Profit Hurdle:</b> <span style="color: #00f098; font-weight: 600;">≥ +0.80% Net Post-Tax</span> (gross move calibrated to +1.10% to completely cover Zerodha brokerage, STT, turnover, and GST).</li>
-                <li><b>Take Profit Target:</b> <span style="color: #00f098; font-weight: 600;">+1.10%</span> (allowing fast completion on 5m intraday momentum).</li>
-                <li><b>Dynamic Trailing Stop:</b> Activates at <span style="color: #00e5ff; font-weight: 600;">+0.60%</span>, instantly ratcheting stop-loss to Breakeven (+0.25% net after round-trip fees) and trailing <b>0.40%</b> below peak.</li>
-                <li><b>Stop Loss Limit:</b> <span style="color: #ff3366; font-weight: 600;">0.60%</span> (strict 2:1 reward-to-risk preservation).</li>
-                <li><b>Scanner Cycle:</b> <b>60-second intervals</b> capturing live breakouts across all 10 stocks.</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-    with r_top2:
-        st.metric("Session Capital", f"₹{summary['available_capital']:,.2f}", f"Total: ₹{summary['total_capital']:,.2f}")
-        st.caption(f"🕒 Last Background Scan: {last_scan_display} {seconds_ago_str}")
-
-    if signals:
-        sig_rows = []
-        for s in signals:
-            sym = s.get("symbol", "").replace(".NS", "")
-            p = float(s.get("price", 0))
-            prob = float(s.get("probability", 0))
-            act = s.get("action", "SKIP")
-            reg = s.get("regime", dominant_regime)
-            reason = s.get("reason", "low_confidence")
-            status_tag = "🟢 BUY TRIGGERED" if act == "BUY" else "🛡️ SKIP (Capital Protected)"
-            sig_rows.append({
-                "Ticker": sym,
-                "Company": s.get("company", STOCK_UNIVERSE.get(s.get("symbol", ""), sym)),
-                "Live NSE Price": f"₹{p:,.2f}",
-                "AI Win Prob": f"{prob*100:.1f}%",
-                "Detected Regime": reg.replace("_", " ").title(),
-                "AI Decision": status_tag,
-                "Reason / Defense Policy": f"Prob ({prob*100:.1f}%) < 55% Entry Gate • Capital Preserved" if "low_confidence" in reason else reason,
-            })
-        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-        st.dataframe(pd.DataFrame(sig_rows), use_container_width=True, hide_index=True)
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # 3. Live Market Prices Section (with prominent "📈 Check Live Market Prices" button & Auto-Stream)
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    p_hdr1, p_hdr2 = st.columns([6, 4])
-    with p_hdr1:
-        st.markdown("<div class='card-title' style='margin:0;'>📈 Live Market Prices & Real-Time Monitoring</div>", unsafe_allow_html=True)
-        st.caption("Inspect real-time NSE market prices, percentage changes, and session intraday ranges across all 10 stocks.")
-    with p_hdr2:
-        sub_c1, sub_c2 = st.columns([1.3, 1.1])
-        with sub_c1:
-            btn_check_prices = st.button("📈 Check Live Market Prices", use_container_width=True, type="primary")
-        with sub_c2:
-            auto_stream_mode = st.selectbox(
-                "Auto-Refresh Stream",
-                ["⚡ Live Stream (15s)", "⚡ Fast Stream (30s)", "Normal (60s)", "Cycle (180s)", "Manual (Paused)"],
-                index=0,
-                label_visibility="collapsed",
-                help="Auto-refreshes prices, AI scans, and order executions continuously on your screen (ideal for live monitoring).",
-            )
-
-    if btn_check_prices:
-        st.cache_data.clear()
-        trader._reload_state()
-
-    prices_df = fetch_latest_prices(tuple(STOCK_SYMBOLS))
-
-    if not prices_df.empty:
-        # Display 10 stock ticker cards in 2 rows of 5
-        cols_top = st.columns(5)
-        for i in range(min(5, len(prices_df))):
-            row = prices_df.iloc[i]
-            delta_val = f"{row['change_pct']:+.2f}%"
-            cols_top[i].metric(
-                row["company"][:14],
-                f"₹{row['price']:,.2f}",
-                delta_val,
-                help=f"High: ₹{row['high']:,.2f} | Low: ₹{row['low']:,.2f} | Vol: {row['volume']:,.0f}",
-            )
-        if len(prices_df) > 5:
-            cols_bot = st.columns(min(5, len(prices_df) - 5))
-            for i in range(5, min(10, len(prices_df))):
-                row = prices_df.iloc[i]
-                delta_val = f"{row['change_pct']:+.2f}%"
-                cols_bot[i - 5].metric(
-                    row["company"][:14],
-                    f"₹{row['price']:,.2f}",
-                    delta_val,
-                    help=f"High: ₹{row['high']:,.2f} | Low: ₹{row['low']:,.2f} | Vol: {row['volume']:,.0f}",
-                )
-    else:
-        st.info("Market prices currently fetching. Click 'Check Live Market Prices' to refresh.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # 4. Manual Capital Adjustment Setting
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
-        <div>
-            <div class="card-title" style="margin: 0;">💰 Manual Capital Adjustment & Portfolio Allocation</div>
-            <div style="font-size: 0.82rem; color: #94a3b8; margin-top: 4px;">
-                Manually adjust your portfolio capital or inject funds. Changes directly update available trading cash and risk parameters.
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    cap_stat1, cap_stat2, cap_stat3 = st.columns(3)
-    cap_stat1.metric("Total Equity", f"₹{summary['total_capital']:,.2f}")
-    cap_stat2.metric("Available Cash", f"₹{summary['available_capital']:,.2f}")
-    cap_stat3.metric("Invested in Open Positions", f"₹{summary['invested_capital']:,.2f}")
-
-    st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
-    adj_col1, adj_col2 = st.columns([3, 2])
-    with adj_col1:
-        current_cap_val = int(summary.get("total_capital", DEFAULT_CAPITAL))
+    cap_c1, cap_c2 = st.columns([3, 4])
+    with cap_c1:
         manual_capital_input = st.number_input(
             "Set / Adjust Portfolio Capital (₹)",
             min_value=1000,
             max_value=100000000,
-            value=current_cap_val,
-            step=10000,
-            help="Enter your target portfolio capital. Available cash will automatically be adjusted.",
+            value=int(summary["total_capital"]),
+            step=5000,
+            label_visibility="visible",
         )
-        # Quick increment presets
-        st.write("⚡ Quick Presets & Additions:")
-        preset_cols = st.columns(6)
+    with cap_c2:
+        st.write("Quick Presets:")
+        preset_cols = st.columns(5)
         preset_target = None
         if preset_cols[0].button("+₹10k", use_container_width=True):
             preset_target = manual_capital_input + 10000
@@ -882,34 +726,20 @@ elif page == "🔴 Live Trading":
             preset_target = 50000
         if preset_cols[4].button("₹100k", use_container_width=True):
             preset_target = 100000
-        if preset_cols[5].button("₹200k", use_container_width=True):
-            preset_target = 200000
 
-        target_save_cap = preset_target if preset_target is not None else manual_capital_input
-
-        btn_save_cap = st.button("💾 Save Capital Adjustment", type="primary", use_container_width=True)
-        if btn_save_cap or preset_target is not None:
-            ok, msg = trader.set_capital(target_save_cap)
-            if ok:
-                st.success(f"✅ {msg}")
-            else:
-                st.error(f"❌ {msg}")
-            st.rerun()
-
-    with adj_col2:
-        st.markdown("<div style='font-size:0.88rem; font-weight:600; color:#e2e8f0; margin-bottom:8px;'>Portfolio Maintenance</div>", unsafe_allow_html=True)
-        st.caption("Reload updated model ensemble weights or reset portfolio records back to fresh baseline.")
-        if st.button("🔄 Reload Saved AI Models", use_container_width=True):
-            trader.reload_models()
-            st.success("Ensemble models reloaded.")
-        if st.button("🗑️ Reset Portfolio & Ledger History", use_container_width=True):
-            trader.reset_all(manual_capital_input)
-            st.warning("Portfolio reset to baseline capital.")
-            st.rerun()
+    target_save_cap = preset_target if preset_target is not None else manual_capital_input
+    btn_save_cap = st.button("💾 Save Capital Adjustment", type="primary", use_container_width=True)
+    if btn_save_cap or preset_target is not None:
+        ok, msg = trader.set_capital(target_save_cap)
+        if ok:
+            st.success(f"✅ {msg}")
+        else:
+            st.error(f"❌ {msg}")
+        st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 5. Active Holding Positions Table
+    # 3. Active Positions Table
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
     st.markdown("<div class='card-title'>📋 Active Open Positions & Live Unrealized P&L</div>", unsafe_allow_html=True)
     positions = trader.state.get("positions", {})
@@ -939,22 +769,16 @@ elif page == "🔴 Live Trading":
 
             tp_p = float(pos.get("tp_price", entry_p * (1 + PROFIT_TARGET_PCT)))
             sl_p = float(pos.get("sl_price", entry_p * (1 - MAX_GROSS_LOSS_PCT)))
-            highest_p = float(pos.get("highest_price", entry_p))
-            gain_peak = (highest_p - entry_p) / entry_p if entry_p > 0 else 0.0
-            is_trail = gain_peak >= TRAILING_STOP_ACTIVATION_PCT
-            trail_tag = "🛡️ TRAIL LOCKED" if is_trail else "Seeking +0.8%"
 
             pos_rows.append({
                 "Company": STOCK_UNIVERSE.get(symbol, symbol),
                 "Symbol": symbol.replace(".NS", ""),
                 "Entry Price": f"₹{entry_p:,.2f}",
                 "Current Price": f"₹{curr_price:,.2f}",
-                "Peak High": f"₹{highest_p:,.2f} (+{gain_peak*100:.2f}%)",
-                "Target (+2%)": f"₹{tp_p:,.2f}",
-                "Stop Loss": f"₹{sl_p:,.2f}",
-                "Trailing State": trail_tag,
                 "Qty": f"{pos['qty']:.2f}",
                 "Invested": f"₹{pos['invested']:,.2f}",
+                "Target (+1.1%)": f"₹{tp_p:,.2f}",
+                "Stop Loss (-0.6%)": f"₹{sl_p:,.2f}",
                 "Gross P&L": f"₹{bd['gross_profit']:+,.2f}",
                 "Net P&L (Post-Tax)": f"₹{bd['net_profit']:+,.2f}",
                 "Net ROI": f"{bd['net_return_pct']:+.3f}%",
@@ -962,10 +786,10 @@ elif page == "🔴 Live Trading":
             })
         st.dataframe(pd.DataFrame(pos_rows), use_container_width=True, hide_index=True)
     else:
-        st.info("🛡️ No active open positions. Cash liquidity is 100% available (₹" + f"{summary['available_capital']:,.2f}" + ") — AI is waiting for high-probability setups.")
+        st.info(f"🛡️ No active open positions. Cash liquidity is 100% available (₹{summary['available_capital']:,.2f}) — AI is waiting for high-probability setups.")
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 6. Live Real-Time Trade Audit & Execution Feed (Tape, Holding, Orders, Scans)
+    # 4. The Live Trade Audit & Execution Feed (Image 1)
     st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
     st.markdown("""
     <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
@@ -974,6 +798,7 @@ elif page == "🔴 Live Trading":
     </div>
     """, unsafe_allow_html=True)
 
+    prices_df = fetch_latest_prices(tuple(STOCK_SYMBOLS))
     price_map = prices_df.set_index("symbol")["price"].to_dict() if not prices_df.empty else {}
     feed = trader.get_live_trade_feed(price_map=price_map)
 
@@ -1037,6 +862,55 @@ elif page == "🔴 Live Trading":
 
     st.markdown("</div>", unsafe_allow_html=True)
 
+    # 5. Live Market in the last
+    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+    p_hdr1, p_hdr2 = st.columns([6, 4])
+    with p_hdr1:
+        st.markdown("<div class='card-title' style='margin:0;'>📈 Live Market Prices & Real-Time Monitoring</div>", unsafe_allow_html=True)
+        st.caption("Inspect real-time NSE market prices, percentage changes, and session intraday ranges across all 10 stocks.")
+    with p_hdr2:
+        sub_c1, sub_c2 = st.columns([1.3, 1.1])
+        with sub_c1:
+            btn_check_prices = st.button("📈 Check Live Market Prices", use_container_width=True, type="primary")
+        with sub_c2:
+            auto_stream_mode = st.selectbox(
+                "Auto-Refresh Stream",
+                ["⚡ Live Stream (15s)", "⚡ Fast Stream (30s)", "Normal (60s)", "Cycle (180s)", "Manual (Paused)"],
+                index=0,
+                label_visibility="collapsed",
+                help="Auto-refreshes prices, AI scans, and order executions continuously on your screen.",
+            )
+
+    if btn_check_prices:
+        st.cache_data.clear()
+        trader._reload_state()
+
+    if not prices_df.empty:
+        cols_top = st.columns(5)
+        for i in range(min(5, len(prices_df))):
+            row = prices_df.iloc[i]
+            delta_val = f"{row['change_pct']:+.2f}%"
+            cols_top[i].metric(
+                row["company"][:14],
+                f"₹{row['price']:,.2f}",
+                delta_val,
+                help=f"High: ₹{row['high']:,.2f} | Low: ₹{row['low']:,.2f} | Vol: {row['volume']:,.0f}",
+            )
+        if len(prices_df) > 5:
+            cols_bot = st.columns(min(5, len(prices_df) - 5))
+            for i in range(5, min(10, len(prices_df))):
+                row = prices_df.iloc[i]
+                delta_val = f"{row['change_pct']:+.2f}%"
+                cols_bot[i - 5].metric(
+                    row["company"][:14],
+                    f"₹{row['price']:,.2f}",
+                    delta_val,
+                    help=f"High: ₹{row['high']:,.2f} | Low: ₹{row['low']:,.2f} | Vol: {row['volume']:,.0f}",
+                )
+    else:
+        st.info("Market prices currently fetching. Click 'Check Live Market Prices' to refresh.")
+    st.markdown("</div>", unsafe_allow_html=True)
+
     if auto_stream_mode != "Manual (Paused)":
         sleep_sec = 15 if "15s" in auto_stream_mode else 30 if "30s" in auto_stream_mode else 60 if "60s" in auto_stream_mode else 180
         time.sleep(sleep_sec)
@@ -1048,11 +922,8 @@ elif page == "🔴 Live Trading":
 # ═════════════════════════════════════════════════════════════════════════════
 elif page == "🧪 Simulation Lab":
     st.markdown("""
-    <div style="margin-bottom: 20px;">
-        <div style="font-size: 1.6rem; font-weight: 800; color: #fff;">🧪 Quantitative Simulation & Backtesting Lab</div>
-        <div style="font-size: 0.9rem; color: #94a3b8;">
-            Select any trading date on the interactive calendar. The engine strictly collects and trains on historical data <b>up to the day before</b> the selected date, eliminating all look-ahead bias, then replays the target session candle-by-candle with the AI ensemble and Zerodha tax engine.
-        </div>
+    <div style="margin-bottom: 16px;">
+        <div style="font-size: 1.6rem; font-weight: 800; color: #fff;">🧪 Simulation Lab</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -1065,116 +936,46 @@ elif page == "🧪 Simulation Lab":
         min_date = available_dates[0]
         max_date = available_dates[-1]
 
-        # Simulation Controls Card
-        with st.container():
-            st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-            st.markdown("<div class='card-title'>⚙️ Interactive Calendar & Simulation Parameters</div>", unsafe_allow_html=True)
+        # Simple Inputs (No extra matter, confidence level fixed)
+        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+        col_dt, col_cap, col_btn = st.columns([3.5, 3.5, 3])
+        with col_dt:
+            cal_target = st.date_input(
+                "📅 Select Date",
+                value=max_date,
+                min_value=min_date,
+                max_value=max_date,
+            )
+        with col_cap:
+            sim_capital = st.number_input(
+                "💰 Capital (₹)",
+                min_value=1000,
+                max_value=10000000,
+                value=10000,
+                step=5000,
+            )
+        with col_btn:
+            st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+            btn_run = st.button("🚀 Run Simulation", use_container_width=True, type="primary")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-            col_mode, col_univ, col_cap = st.columns([3, 2, 2])
-            with col_mode:
-                sim_mode = st.radio(
-                    "Simulation Horizon Mode",
-                    ["📅 Specific Session (Calendar Selection)", "⚡ Multi-Day Rolling Window"],
-                    horizontal=True,
-                )
-            with col_univ:
-                sim_stocks = st.multiselect(
-                    "Stock Basket Selection",
-                    ["ALL"] + STOCK_SYMBOLS,
-                    default=["ALL"],
-                    help="Select 'ALL' to simulate over the entire 10-stock NIFTY 50 universe, or pick specific stocks.",
-                )
-            with col_cap:
-                sim_capital = st.number_input(
-                    "Initial Portfolio Capital (₹)",
-                    min_value=10000,
-                    max_value=100000000,
-                    value=100000,
-                    step=10000,
-                )
-
-            col_param1, col_param2, col_param3, col_param4 = st.columns(4)
-            with col_param1:
-                if "Multi-Day" in sim_mode:
-                    sim_days_val = st.selectbox("Historical Window", [1, 3, 5, 10, 15, 20], index=2)
-                    sim_target_date = None
-                    day_before = None
-                else:
-                    sim_days_val = None
-                    # Native Calendar Input
-                    cal_target = st.date_input(
-                        "📅 Pick Simulation Target Date",
-                        value=max_date,
-                        min_value=min_date,
-                        max_value=max_date,
-                        help=f"Dataset range: {min_date.strftime('%d %b %Y')} to {max_date.strftime('%d %b %Y')}",
-                    )
-                    sim_target_date = cal_target
-                    # Calculate day before from available trading dates
-                    prior_dates = [d for d in available_dates if d < cal_target]
-                    day_before = prior_dates[-1] if prior_dates else (cal_target - timedelta(days=1))
-
-            with col_param2:
-                min_conf_pct = st.slider(
-                    "🎯 AI Confidence Gate (%)",
-                    min_value=40, max_value=80, value=55, step=5,
-                    help="Only open trades when the ensemble model P(Win) exceeds this threshold.",
-                )
-                min_conf = min_conf_pct / 100.0
-
-            with col_param3:
-                profit_target_pct = st.slider(
-                    "🟢 Profit Target (%)",
-                    min_value=0.5, max_value=4.0, value=2.0, step=0.1,
-                    help="Target profit to trigger upper exit (default 2.0% captures larger intraday swings).",
-                ) / 100.0
-
-            with col_param4:
-                stop_loss_pct = st.slider(
-                    "🔴 Stop Loss (%)",
-                    min_value=0.3, max_value=2.5, value=0.8, step=0.1,
-                    help="Initial emergency stop loss. Once +0.80% gain is reached, dynamic trailing stop ratchets to breakeven + fees and trails 0.50% below peak watermark.",
-                ) / 100.0
-
-            st.markdown("""
-            <div style="background: rgba(0, 240, 152, 0.06); border: 1px solid rgba(0, 240, 152, 0.2); border-radius: 8px; padding: 8px 12px; margin: 6px 0 10px 0; font-size: 0.8rem; color: #00f098; display: flex; align-items: center; gap: 8px;">
-                <span>🛡️</span>
-                <span><b>Dynamic Trailing Stop & Gating Active:</b> Ratchets stop to Breakeven (+0.25% after round-trip taxes/fees) at +0.80% gain, trails 0.50% below peak watermark, and filters entries by ≥0.80% Expected Return.</span>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Informative banner showing target date & day before data cutoff
-            if sim_target_date is not None and day_before is not None:
-                st.markdown(f"""
-                <div style="background: rgba(0, 229, 255, 0.08); border: 1px solid rgba(0, 229, 255, 0.25); border-radius: 10px; padding: 12px 16px; margin: 10px 0;">
-                    <div style="font-size: 0.92rem; font-weight: 700; color: #00e5ff; display: flex; align-items: center; gap: 8px;">
-                        <span>📅 Selected Simulation Session:</span>
-                        <span style="color: #ffffff;">{sim_target_date.strftime('%A, %d %B %Y')}</span>
-                    </div>
-                    <div style="font-size: 0.85rem; color: #f1f5f9; margin-top: 5px;">
-                        ⏳ <b>Historical Data Cutoff (Day Before):</b> Replay strictly collects and evaluates historical data up to <b>{day_before.strftime('%A, %d %B %Y')}</b>.
-                    </div>
-                    <div style="font-size: 0.78rem; color: #94a3b8; margin-top: 3px;">
-                        🛡️ <b>Zero Look-Ahead Bias Guarantee:</b> The model has zero knowledge of the selected day's price action until it replays candle-by-candle in real time.
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-            btn_run = st.button("🚀 Run High-Speed Quantitative Simulation", use_container_width=True, type="primary")
-            st.markdown("</div>", unsafe_allow_html=True)
+        # Fixed confidence level and parameters (no sliders needed)
+        FIXED_CONFIDENCE = 0.50
+        FIXED_TP_PCT = 0.011
+        FIXED_SL_PCT = 0.006
 
         if btn_run or "last_sim_result" in st.session_state:
             if btn_run:
-                with st.spinner("Replaying historical tape candle-by-candle with AI ensemble & Zerodha tax engine..."):
+                with st.spinner("Running simulation..."):
                     sim_res = sim_engine.run_simulation(
-                        symbols=sim_stocks,
-                        n_days=sim_days_val,
-                        target_date=sim_target_date,
+                        symbols=["ALL"],
+                        n_days=None,
+                        target_date=cal_target,
                         starting_capital=sim_capital,
-                        min_confidence=min_conf,
+                        min_confidence=FIXED_CONFIDENCE,
                         min_expected_return=MIN_EXPECTED_RETURN_PCT,
-                        profit_target_pct=profit_target_pct,
-                        stop_loss_pct=stop_loss_pct,
+                        profit_target_pct=FIXED_TP_PCT,
+                        stop_loss_pct=FIXED_SL_PCT,
                         trailing_activation_pct=TRAILING_STOP_ACTIVATION_PCT,
                         trailing_distance_pct=TRAILING_STOP_DISTANCE_PCT,
                     )
@@ -1183,132 +984,48 @@ elif page == "🧪 Simulation Lab":
                 sim_res = st.session_state["last_sim_result"]
 
             if sim_res.get("status") == "success":
-                st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True)
+                t_log = sim_res.get("trade_log", [])
+                invested_amt = sum(t.get("invested", 0) for t in t_log) if t_log else 0.0
 
-                # Simulation Session Metadata Badge
-                res_target = sim_res.get("target_date")
-                res_prior = sim_res.get("day_before_target")
-                res_bars = sim_res.get("history_bars_collected", 0)
+                # 1. Top Metrics: Capital, Invested Amount, Current Profit & Loss
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Total Capital", f"₹{sim_res['ending_capital']:,.2f}")
+                m2.metric("Invested Amount", f"₹{invested_amt:,.2f}")
+                m3.metric("Current Profit / Loss", f"₹{sim_res['net_profit']:+,.2f}", f"{sim_res['roi_pct']:+.2f}%")
 
-                if res_target and res_prior:
-                    st.markdown(f"""
-                    <div style="background: rgba(15, 21, 32, 0.8); border: 1px solid rgba(0, 240, 152, 0.3); border-radius: 8px; padding: 10px 16px; margin-bottom: 14px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
-                        <div>
-                            <span style="color: #94a3b8; font-size: 0.82rem;">Replay Session:</span>
-                            <b style="color: #fff; margin-left: 6px;">{res_target}</b>
-                        </div>
-                        <div>
-                            <span style="color: #94a3b8; font-size: 0.82rem;">Data Collected Prior (Day Before):</span>
-                            <b style="color: #00e5ff; margin-left: 6px;">{res_prior}</b>
-                            <span style="color: #64748b; font-size: 0.78rem;">({res_bars:,} historical bars)</span>
-                        </div>
-                        <div>
-                            <span class="status-pill status-live">Zero Look-Ahead Bias</span>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
 
-                # Scorecard KPI Tiles
-                kpi_c1, kpi_c2, kpi_c3, kpi_c4, kpi_c5, kpi_c6 = st.columns(6)
-                kpi_c1.metric("Final Capital", f"₹{sim_res['ending_capital']:,.2f}")
-                kpi_c2.metric("Net P&L", f"₹{sim_res['net_profit']:+,.2f}", f"{sim_res['roi_pct']:+.2f}%")
-                kpi_c3.metric("Win Rate", f"{sim_res['win_rate']:.1f}%", f"{sim_res['winning_trades']}W / {sim_res['losing_trades']}L")
-                kpi_c4.metric("Profit Factor", f"{sim_res['profit_factor']:.2f}")
-                kpi_c5.metric("Max Drawdown", f"{sim_res['max_drawdown_pct']:.2f}%", f"-₹{sim_res['max_drawdown_amt']:,.0f}")
-                kpi_c6.metric("Sharpe Ratio", f"{sim_res['sharpe_ratio']:.2f}", f"Alpha: {sim_res['alpha_pct']:+.1f}%")
-
-                st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
-
-                # Equity Curve & Drawdown Charts
-                eq_df = sim_res["equity_df"]
-                if not eq_df.empty:
-                    col_eq1, col_eq2 = st.columns([5, 4])
-
-                    with col_eq1:
-                        st.markdown("<div class='card-title'>📈 Compounded Capital Growth vs Buy & Hold Benchmark</div>", unsafe_allow_html=True)
-                        fig_eq = go.Figure()
-
-                        # Strategy curve
-                        fig_eq.add_trace(go.Scatter(
-                            x=eq_df["timestamp"], y=eq_df["strategy_equity"],
-                            mode="lines", name="AI Quant Strategy",
-                            line=dict(color="#00f098", width=2.5),
-                            fill="tozeroy", fillcolor="rgba(0, 240, 152, 0.08)",
-                        ))
-
-                        # Benchmark curve
-                        fig_eq.add_trace(go.Scatter(
-                            x=eq_df["timestamp"], y=eq_df["benchmark_equity"],
-                            mode="lines", name="Buy & Hold Equal-Weight",
-                            line=dict(color="#64748b", width=1.5, dash="dash"),
-                        ))
-
-                        fig_eq.add_hline(
-                            y=sim_res["starting_capital"], line_dash="dot", line_color="#94a3b8",
-                            annotation_text=f"Initial: ₹{sim_res['starting_capital']:,.0f}",
-                        )
-
-                        fig_eq.update_layout(
-                            template="plotly_dark",
-                            paper_bgcolor="rgba(0,0,0,0)",
-                            plot_bgcolor="rgba(15,21,32,0.6)",
-                            height=360,
-                            margin=dict(l=10, r=10, t=20, b=10),
-                            yaxis_title="Portfolio Capital (₹)",
-                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                        )
-                        st.plotly_chart(fig_eq, use_container_width=True)
-
-                    with col_eq2:
-                        st.markdown("<div class='card-title'>📊 Trade P&L Distribution & Microstructure Costs</div>", unsafe_allow_html=True)
-                        t_log = sim_res["trade_log"]
-                        if t_log:
-                            pnl_df = pd.DataFrame(t_log)
-                            bar_colors = ["#00f098" if p > 0 else "#ff3366" for p in pnl_df["net_pnl"]]
-
-                            fig_bars = go.Figure()
-                            fig_bars.add_trace(go.Bar(
-                                x=pnl_df["trade_id"], y=pnl_df["net_pnl"],
-                                marker_color=bar_colors, name="Net P&L (₹)",
-                            ))
-                            fig_bars.update_layout(
-                                template="plotly_dark",
-                                paper_bgcolor="rgba(0,0,0,0)",
-                                plot_bgcolor="rgba(15,21,32,0.6)",
-                                height=360,
-                                margin=dict(l=10, r=10, t=20, b=10),
-                                xaxis_title="Trade #", yaxis_title="Net Profit / Loss (₹)",
-                            )
-                            st.plotly_chart(fig_bars, use_container_width=True)
-                        else:
-                            st.info("No trades executed with current strict threshold. Capital 100% protected.")
-
-                # Model Accuracy & Precision Breakdown
+                # 2. Below that: The Total Table
                 st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-                st.markdown("<div class='card-title'>🎯 AI Precision & Signal Filtration Verification</div>", unsafe_allow_html=True)
-                acc_c1, acc_c2, acc_c3 = st.columns(3)
-                acc_c1.metric("Market Candles Evaluated", f"{sim_res['total_signals_evaluated']:,}")
-                acc_c2.metric("Signals Triggered", f"{sim_res['signals_triggered']:,}", f"{(sim_res['signals_triggered']/max(1, sim_res['total_signals_evaluated'])*100):.1f}% pass gate")
-                acc_c3.metric("Noise Filtered Out", f"{sim_res['noise_filtered_pct']:.1f}%", "Capital Preserved")
-
-                st.caption("The AI Confidence Gate prevents executing in low-conviction or noisy chop. Only entries meeting both probability and positive expected return hurdles trigger capital deployment.")
-                st.markdown("</div>", unsafe_allow_html=True)
-
-                # Trade Tape
-                st.markdown("<div class='card-title'>📜 Chronological Executed Trade Tape</div>", unsafe_allow_html=True)
-                if sim_res["trade_log"]:
-                    tape_df = pd.DataFrame(sim_res["trade_log"])
-                    tape_cols = [
-                        "trade_id", "company", "entry_time", "exit_time", "hold_mins",
-                        "entry_price", "exit_price", "qty", "gross_pnl", "total_fees",
-                        "tax", "net_pnl", "net_return_pct", "reason", "p_win"
-                    ]
-                    tape_df = tape_df[[c for c in tape_cols if c in tape_df.columns]]
-                    st.dataframe(tape_df, use_container_width=True, hide_index=True)
+                st.markdown("<div class='card-title'>📋 Total Simulation Trades Table</div>", unsafe_allow_html=True)
+                if t_log:
+                    tape_df = pd.DataFrame(t_log)
+                    col_renames = {
+                        "trade_id": "#",
+                        "company": "Company",
+                        "symbol": "Symbol",
+                        "entry_time": "Entry Time",
+                        "exit_time": "Exit Time",
+                        "entry_price": "Entry Price (₹)",
+                        "exit_price": "Exit Price (₹)",
+                        "qty": "Qty",
+                        "invested": "Invested (₹)",
+                        "gross_pnl": "Gross P&L (₹)",
+                        "total_fees": "Brokerage & Fees (₹)",
+                        "tax": "Tax (₹)",
+                        "net_pnl": "Net P&L (₹)",
+                        "net_return_pct": "Net ROI %",
+                        "reason": "Exit Reason",
+                    }
+                    display_cols = [c for c in col_renames.keys() if c in tape_df.columns]
+                    out_df = tape_df[display_cols].rename(columns=col_renames)
+                    st.dataframe(out_df, use_container_width=True, hide_index=True)
                 else:
-                    st.info("No trades occurred in this window.")
+                    st.info("No trades executed on this date with optimal confidence gate (Capital 100% preserved).")
+                st.markdown("</div>", unsafe_allow_html=True)
             else:
                 st.error(sim_res.get("message", "Simulation failed."))
+
 
 
 # ═════════════════════════════════════════════════════════════════════════════

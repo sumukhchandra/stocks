@@ -19,8 +19,8 @@ STOCK_UNIVERSE = {
 STOCK_SYMBOLS = list(STOCK_UNIVERSE.keys())
 
 # --- Trading Thresholds & Profit Optimization -------------------------------
-MIN_NET_PROFIT_PCT = 0.0060         # 0.60% minimum net profit after ALL costs to consider trade viable
-MIN_EXPECTED_RETURN_PCT = 0.0080    # 0.80% minimum predicted return from 4-model ensemble (filters noise)
+MIN_NET_PROFIT_PCT = 0.0005         # 0.05% minimum net profit after ALL costs to consider trade viable
+MIN_EXPECTED_RETURN_PCT = 0.0010    # 0.10% (10 bps) minimum predicted return from ensemble (covers fees + positive alpha)
 PROFIT_TARGET_PCT = 0.020           # 2.0% initial Take-Profit target (allows winners to run)
 MAX_GROSS_LOSS_PCT = 0.008          # 0.80% initial Stop-Loss limit
 TRAILING_STOP_ACTIVATION_PCT = 0.008 # Once price reaches +0.80%, stop-loss ratchets to Breakeven (+0.25%)

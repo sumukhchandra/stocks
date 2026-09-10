@@ -233,7 +233,7 @@ class NSEAutoTrader:
 
     # -- Core Trading Logic ---------------------------------------------------
 
-    def run_single_cycle(self, min_confidence=0.50):
+    def run_single_cycle(self, min_confidence=0.48):
         """Execute one full scan-and-trade cycle."""
         if not self._ensure_engine():
             return {"status": "error", "message": "Models not loaded"}
@@ -446,7 +446,7 @@ class NSEAutoTrader:
             return signal
 
         viable, cost_breakdown = self.tax_engine.is_trade_viable(
-            allocation, expected_return, min_net_pct=MIN_NET_PROFIT_PCT
+            allocation, expected_return, min_net_pct=0.0
         )
         signal["cost_breakdown"] = cost_breakdown
 
@@ -454,7 +454,7 @@ class NSEAutoTrader:
             signal["action"] = "SKIP"
             signal["reason"] = (
                 f"not_viable_after_costs (net: {cost_breakdown['net_return_pct']:.4f}%, "
-                f"need: {MIN_NET_PROFIT_PCT*100:.1f}%)"
+                f"costs exceed edge)"
             )
             return signal
 

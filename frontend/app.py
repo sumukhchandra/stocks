@@ -671,7 +671,7 @@ elif page == "🔴 Live Trading":
         with col_btn2:
             if st.button("⚡ Instant Scan", use_container_width=True, help="Immediately evaluate orderflow across all 10 stocks right now"):
                 with st.spinner("Scanning live market orderflow..."):
-                    res = trader.run_single_cycle(min_confidence=0.55)
+                    res = trader.run_single_cycle(min_confidence=0.48)
                 st.success(f"Scan complete — {len(res.get('actions', []))} orders triggered")
                 st.rerun()
     st.markdown("</div>", unsafe_allow_html=True)
@@ -701,7 +701,7 @@ elif page == "🔴 Live Trading":
             <ul style="margin: 4px 0 6px 18px; padding: 0;">
                 <li><b>Take Profit Target:</b> <span style="color: #00f098; font-weight: 600;">+2.00%</span> (allowing winners to compound instead of micro-cutting).</li>
                 <li><b>Dynamic Trailing Stop:</b> Activates once trade reaches <span style="color: #00e5ff; font-weight: 600;">+0.80% gain</span>, instantly ratcheting stop-loss to Breakeven (+0.25% net after round-trip fees) and trailing <b>0.50%</b> below the highest watermark.</li>
-                <li><b>High-Conviction Filter:</b> Enforces <span style="color: #ffb703; font-weight: 600;">≥ 0.80% Expected Return</span> gate, eliminating 70% of low-edge market noise.</li>
+                <li><b>High-Conviction Filter:</b> Enforces <span style="color: #ffb703; font-weight: 600;">≥ 0.10% Expected Return</span> gate (10 bps/candle), strictly filtering out negative-expectancy market noise.</li>
                 <li><b>Intraday Gap Defense:</b> Mandatory auto square-off at <b>3:20 PM IST</b> to prevent overnight gap-down exposure.</li>
             </ul>
             <b>Current Status:</b> Capital protected at <b>₹{summary['available_capital']:,.2f}</b> in 100% liquid cash. AI engine is scanning every 5m candle for high-conviction breakout signals.

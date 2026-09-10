@@ -836,14 +836,17 @@ class NSEAutoTrader:
         return feed
 
     def set_capital(self, amount):
-        """Reset capital (only when no positions are open)."""
-        if self.state["positions"]:
-            return False, "Cannot reset capital while positions are open"
-        self.state["total_capital"] = amount
-        self.state["available_capital"] = amount
-        self.state["starting_capital"] = amount
+        """Adjust portfolio capital (available cash updated accordingly)."""
+        self._reload_state()
+        positions = self.state.get("positions", {})
+        invested = sum(p.get("invested", 0) for p in positions.values())
+        if amount < invested:
+            return False, f"Adjusted capital (₹{amount:,.2f}) cannot be less than currently invested capital (₹{invested:,.2f})."
+        self.state["total_capital"] = float(amount)
+        self.state["available_capital"] = float(amount - invested)
+        self.state["starting_capital"] = float(amount)
         self._save_state()
-        return True, f"Capital set to Rs.{amount:,.2f}"
+        return True, f"Portfolio capital successfully adjusted to ₹{amount:,.2f} (Available Cash: ₹{self.state['available_capital']:,.2f})"
 
     def reset_all(self, capital=None):
         """Full reset: clear all positions, trade history, and start fresh."""

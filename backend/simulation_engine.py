@@ -85,22 +85,43 @@ class SimulationEngine:
         if df.empty:
             return {"status": "error", "message": "No historical dataset found."}
 
-        # Filter symbols
-        if symbols and len(symbols) > 0 and "ALL" not in symbols:
-            df_sim = df[df["symbol"].isin(symbols)].copy()
-        else:
-            df_sim = df.copy()
+        day_before_target = None
+        history_bars_count = 0
 
-        # Date filtering
+        # Date filtering & Pre-Target Data Collection
         if target_date is not None:
-            df_sim = df_sim[df_sim["date_only"] == target_date].copy()
+            if isinstance(target_date, datetime):
+                target_date = target_date.date()
+            elif isinstance(target_date, str):
+                target_date = datetime.strptime(target_date, "%Y-%m-%d").date()
+
+            # Historical data collected strictly up to the day before target date
+            df_history_before = df[df["date_only"] < target_date]
+            history_dates = sorted(df_history_before["date_only"].unique())
+            day_before_target = history_dates[-1] if history_dates else (target_date - timedelta(days=1))
+            history_bars_count = len(df_history_before)
+
+            # Target session to replay
+            df_target = df[df["date_only"] == target_date].copy()
+            if symbols and len(symbols) > 0 and "ALL" not in symbols:
+                df_sim = df_target[df_target["symbol"].isin(symbols)].copy()
+            else:
+                df_sim = df_target.copy()
         elif n_days is not None:
-            dates = sorted(df_sim["date_only"].unique())
+            if symbols and len(symbols) > 0 and "ALL" not in symbols:
+                df_filtered = df[df["symbol"].isin(symbols)].copy()
+            else:
+                df_filtered = df.copy()
+            dates = sorted(df_filtered["date_only"].unique())
             selected_dates = dates[-n_days:] if len(dates) >= n_days else dates
-            df_sim = df_sim[df_sim["date_only"].isin(selected_dates)].copy()
+            df_sim = df_filtered[df_filtered["date_only"].isin(selected_dates)].copy()
 
         if df_sim.empty:
-            return {"status": "error", "message": "No data matches the selected timeframe/symbols."}
+            return {
+                "status": "error",
+                "message": f"No data found for selected date ({target_date}). Data was available up to {day_before_target}.",
+                "day_before_target": day_before_target,
+            }
 
         # Precompute model predictions across all rows using fast vectorization
         X_vec = df_sim.reindex(columns=self.engine.primary_features, fill_value=0)
@@ -356,7 +377,9 @@ class SimulationEngine:
             "max_drawdown_amt": max_drawdown_amt,
             "sharpe_ratio": sharpe_ratio,
             "total_fees": total_fees,
-            "total_tax": total_tax,
+            "target_date": target_date,
+            "day_before_target": day_before_target,
+            "history_bars_collected": history_bars_count,
             "total_signals_evaluated": total_signals_evaluated,
             "signals_triggered": signals_triggered,
             "noise_filtered_pct": ((1 - signals_triggered / max(1, total_signals_evaluated)) * 100),

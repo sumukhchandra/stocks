@@ -24,9 +24,11 @@ ml_models/models/saved_models/return_regressor_extratrees.joblib
 .vscode/
 .idea/
 
-# CatBoost
+# CatBoost & Scratch
 catboost_info/
+scratch/
 
 # OS
 .DS_Store
 Thumbs.db
+cloudflared.exe

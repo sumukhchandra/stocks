@@ -18,27 +18,31 @@ STOCK_UNIVERSE = {
 
 STOCK_SYMBOLS = list(STOCK_UNIVERSE.keys())
 
-# --- Trading Thresholds & Profit Optimization -------------------------------
-MIN_NET_PROFIT_PCT = 0.0005         # 0.05% minimum net profit after ALL costs to consider trade viable
-MIN_EXPECTED_RETURN_PCT = 0.0010    # 0.10% (10 bps) minimum predicted return from ensemble (covers fees + positive alpha)
-PROFIT_TARGET_PCT = 0.020           # 2.0% initial Take-Profit target (allows winners to run)
-MAX_GROSS_LOSS_PCT = 0.008          # 0.80% initial Stop-Loss limit
-TRAILING_STOP_ACTIVATION_PCT = 0.008 # Once price reaches +0.80%, stop-loss ratchets to Breakeven (+0.25%)
-TRAILING_STOP_DISTANCE_PCT = 0.005  # Trails 0.50% below peak watermark to lock in maximum profit
+# --- Trading Thresholds & High-Yield Target Optimization ----------------------
+TARGET_PROFIT_PER_TRADE = 50.0       # Target Rs.50 net profit per successful trade
+TARGET_DAILY_PROFIT = 500.0         # Target Rs.500 daily net profit (10-15 successful trades)
+INTRADAY_LEVERAGE = 5.0             # 5x Margin Intraday Square-off (MIS standard on Zerodha/Upstox)
+MIN_POSITION_SIZE_INR = 4500.0      # Minimum size per trade (~Rs.4,500 - Rs.5,000) to yield Rs.50+ net after all taxes
+MIN_NET_PROFIT_PCT = 0.0005         # 0.05% minimum net profit after ALL costs
+MIN_EXPECTED_RETURN_PCT = 0.0010    # 0.10% (10 bps) minimum predicted return from ensemble
+PROFIT_TARGET_PCT = 0.012           # 1.20% Take-Profit target (optimized for 5m intraday completion to hit 10-15 trades/day)
+MAX_GROSS_LOSS_PCT = 0.006          # 0.60% initial Stop-Loss limit (strict 2:1 reward-to-risk ratio)
+TRAILING_STOP_ACTIVATION_PCT = 0.006 # Ratchet stop-loss to Breakeven (+0.25%) once trade reaches +0.60%
+TRAILING_STOP_DISTANCE_PCT = 0.004  # Trails 0.40% below peak watermark
 AUTO_EOD_SQUAREOFF_HOUR = 15        # Auto square-off at 3:20 PM IST to eliminate overnight gap-down risk
 AUTO_EOD_SQUAREOFF_MINUTE = 20
-DEFAULT_CAPITAL = 100000            # Default starting capital (INR) -- overridable from UI
+DEFAULT_CAPITAL = 10000             # Default starting capital (INR) -- overridable from UI
 
 # --- Position Sizing (dynamic, confidence-based) -----------------------------
 # Percentage of AVAILABLE (uninvested) capital to allocate per trade
 POSITION_SIZING = {
-    "high":   0.15,   # Confidence > 0.8  -> 15% of available capital
-    "medium": 0.10,   # Confidence 0.7-0.8 -> 10%
-    "low":    0.05,   # Confidence 0.6-0.7 -> 5%
+    "high":   0.25,   # High conviction -> larger allocation
+    "medium": 0.20,   # Moderate
+    "low":    0.15,   # Low
 }
 
 # --- Scanning & Timing -------------------------------------------------------
-SCAN_INTERVAL_SECONDS = 180         # Scan market every 3 minutes
+SCAN_INTERVAL_SECONDS = 60          # Active 60s scanner to capture 10-15 intraday trade setups/day
 MARKET_OPEN_HOUR = 9                # NSE opens at 9:15 AM IST
 MARKET_OPEN_MINUTE = 15
 MARKET_CLOSE_HOUR = 15              # NSE closes at 3:30 PM IST

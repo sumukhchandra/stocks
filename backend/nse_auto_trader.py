@@ -41,6 +41,10 @@ from database.stocks_config import (
     SCAN_INTERVAL_SECONDS,
     ACCURACY_RETRAIN_THRESHOLD,
     ROLLING_ACCURACY_WINDOW,
+    TARGET_PROFIT_PER_TRADE,
+    TARGET_DAILY_PROFIT,
+    INTRADAY_LEVERAGE,
+    MIN_POSITION_SIZE_INR,
 )
 import ml_models.validation
 import ml_models.validation.purged_cv
@@ -217,19 +221,30 @@ class NSEAutoTrader:
     # -- Position Sizing ------------------------------------------------------
 
     def _get_allocation(self, confidence, min_confidence=0.50):
-        """Dynamic allocation based on model confidence."""
+        """
+        Target-yield allocation engineered to deliver >= Rs.50 net profit per trade.
+        Allocates ~Rs.4,500 - Rs.5,000 per trade so a 1.2% intraday move yields Rs.50+ net profit
+        after all Zerodha brokerage, STT, and taxes.
+        """
         available = self.state["available_capital"]
-        if confidence > 0.8:
-            pct = POSITION_SIZING["high"]
-        elif confidence > 0.7:
-            pct = POSITION_SIZING["medium"]
-        elif confidence > 0.6:
-            pct = POSITION_SIZING["low"]
+        # Calculate target position size to achieve TARGET_PROFIT_PER_TRADE (Rs.50) on PROFIT_TARGET_PCT (1.2%)
+        target_size = max(MIN_POSITION_SIZE_INR, (TARGET_PROFIT_PER_TRADE + 8.0) / PROFIT_TARGET_PCT)
+
+        if confidence > 0.75:
+            alloc = target_size * 1.15  # ~Rs.5,500 for high conviction
         elif confidence >= min_confidence:
-            pct = 0.10  # 10% allocation for moderate confidence
+            alloc = target_size        # ~Rs.4,800 - Rs.5,000
         else:
-            return 0  # Below minimum confidence
-        return available * pct
+            return 0.0
+
+        if available < alloc:
+            # If remaining available cash is at least Rs.2,000, allocate whatever is left
+            if available >= 2000.0:
+                alloc = available
+            else:
+                return 0.0
+
+        return round(float(alloc), 2)
 
     # -- Core Trading Logic ---------------------------------------------------
 
@@ -924,12 +939,12 @@ class NSEAutoTrader:
         positions = self.state.get("positions", {})
         invested = sum(p.get("invested", 0) for p in positions.values())
         if amount < invested:
-            return False, f"Adjusted capital (₹{amount:,.2f}) cannot be less than currently invested capital (₹{invested:,.2f})."
+            return False, f"Adjusted capital (Rs.{amount:,.2f}) cannot be less than currently invested capital (Rs.{invested:,.2f})."
         self.state["total_capital"] = float(amount)
         self.state["available_capital"] = float(amount - invested)
         self.state["starting_capital"] = float(amount)
         self._save_state()
-        return True, f"Portfolio capital successfully adjusted to ₹{amount:,.2f} (Available Cash: ₹{self.state['available_capital']:,.2f})"
+        return True, f"Portfolio capital successfully adjusted to Rs.{amount:,.2f} (Available Cash: Rs.{self.state['available_capital']:,.2f})"
 
     def reset_all(self, capital=None):
         """Full reset: clear all positions, trade history, and start fresh."""

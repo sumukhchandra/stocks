@@ -55,6 +55,7 @@ async function apiFetch(endpoint, options = {}) {
   const headers = {
     "X-API-Key": apiKey,
     "Content-Type": "application/json",
+    "Bypass-Tunnel-Reminder": "true",
     ...(options.headers || {})
   };
 

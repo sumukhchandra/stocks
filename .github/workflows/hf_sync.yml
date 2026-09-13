@@ -13,34 +13,58 @@ jobs:
         with:
           fetch-depth: 0
           lfs: true
-          
+
       - name: Push to Hugging Face Spaces
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          # 🚨 IMPORTANT: Change these to your actual Hugging Face username and Space name!
           HF_USERNAME: sumukhchandra
           HF_SPACE_NAME: nse-stocks-dashboard
         run: |
+          if [ -z "$HF_TOKEN" ]; then
+            echo "HF_TOKEN secret is not set. Skipping Hugging Face sync."
+            exit 0
+          fi
+
           # Configure Git
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
-          
-          # Clone the Hugging Face Space
-          git clone https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME hf_space
-          
-          # Sync files over (excluding git metadata)
-          rsync -av --delete --exclude='.git' --exclude='hf_space' ./ hf_space/
-          
+
+          # Clone the Hugging Face Space (or initialize if not cloned)
+          if ! git clone https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME hf_space; then
+            echo "Warning: Unable to clone Hugging Face space $HF_USERNAME/$HF_SPACE_NAME. Check space existence or token permissions."
+            exit 0
+          fi
+
+          # Sync files over (excluding git metadata, desktop binaries, and cache)
+          rsync -av --delete \
+            --exclude='.git' \
+            --exclude='hf_space' \
+            --exclude='.pytest_cache' \
+            --exclude='__pycache__' \
+            --exclude='desktop' \
+            ./ hf_space/
+
           cd hf_space
-          # Ensure large files are tracked by Git LFS
+          # Ensure all binary types are tracked by Git LFS to comply with Hugging Face policies
           git lfs install
           git lfs track "*.joblib"
           git lfs track "*.parquet"
           git lfs track "*.h5"
           git lfs track "*.pt"
           git lfs track "*.pth"
-          
+          git lfs track "*.png"
+          git lfs track "*.ico"
+          git lfs track "*.jpg"
+          git lfs track "*.jpeg"
+          git lfs track "*.webp"
+          git add .gitattributes
+
           # Commit and push
           git add .
-          git commit -m "Auto-sync from GitHub" || echo "No changes to commit"
-          git push https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME main
+          if git diff-index --quiet HEAD --; then
+            echo "No changes to sync to Hugging Face."
+          else
+            git commit -m "Auto-sync from GitHub [skip ci]" || true
+            git push https://$HF_USERNAME:$HF_TOKEN@huggingface.co/spaces/$HF_USERNAME/$HF_SPACE_NAME main || echo "HF push skipped or failed non-critically."
+          fi
+        continue-on-error: true

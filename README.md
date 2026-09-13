@@ -135,3 +135,21 @@ The system features a **decoupled client-server architecture**:
 ### Quick Launch Scripts:
 - `START_PERMANENT_TERMINAL.bat`: Launches FastAPI backend on port 8000, Streamlit terminal on port 8501, public mobile tunnel, and opens the mobile interface.
 - `STOP_TERMINAL.bat`: Safely and completely terminates all background servers and tunnels.
+
+---
+
+## ☁️ Deploying Frontend to Render (100% Free & Auto-Updating)
+
+The mobile frontend is fully pre-configured for **Render Static Sites** (`render.yaml`):
+
+1. Go to [dashboard.render.com](https://dashboard.render.com) and click **New +** ➔ **Static Site**.
+2. Connect your GitHub repository (`sumukhchandra/stocks`).
+3. Configure settings:
+   - **Name**: `nse-stocks-mobile`
+   - **Branch**: `main`
+   - **Root Directory**: `frontend/mobile`
+   - **Build Command**: *(leave empty)*
+   - **Publish Directory**: `.`
+4. Click **Create Static Site**.
+5. Render deploys your app globally on HTTPS (e.g. `https://nse-stocks-mobile.onrender.com`).
+6. Whenever you commit changes to `frontend/mobile/` and push to GitHub, Render automatically builds and updates your mobile app within seconds!

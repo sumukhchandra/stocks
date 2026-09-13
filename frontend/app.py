@@ -460,20 +460,21 @@ if not os.path.exists(qr_img_path):
 
 mobile_url = "http://23.23.0.204:8501"
 mobile_native_url = "http://23.23.0.204:8000/mobile"
+render_mobile_url = "https://nse-stocks-mobile.onrender.com"
 
-with st.sidebar.expander("📱 Mobile App (PWA & Native)", expanded=True):
+with st.sidebar.expander("📱 Mobile App (Render & PWA)", expanded=True):
     st.markdown("""
     <div style="font-size: 0.76rem; color: #94a3b8; line-height: 1.35; margin-bottom: 6px;">
-        Scan with your phone camera to open on mobile, then tap <b>Add to Home Screen</b>:
+        Scan or tap below to open on mobile, then tap <b>Add to Home Screen</b>:
     </div>
     """, unsafe_allow_html=True)
     if os.path.exists(qr_img_path):
-        st.image(qr_img_path, caption=f"Mobile Terminal", use_container_width=True)
+        st.image(qr_img_path, caption="Mobile Terminal", use_container_width=True)
     st.markdown(f"""
-    <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px; line-height: 1.4;">
-        ⚡ <b>Terminal Link</b>: <a href="{mobile_url}" target="_blank" style="color: #00e5ff; font-weight: 600;">{mobile_url}</a><br>
-        📱 <b>Lightweight Client</b>: <a href="{mobile_native_url}" target="_blank" style="color: #00f098; font-weight: 600;">/mobile (FastAPI)</a><br>
-        📲 <b>iOS</b>: Share → <i>Add to Home Screen</i> (Fullscreen App)
+    <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px; line-height: 1.45;">
+        ☁️ <b>Render Cloud App</b>: <a href="{render_mobile_url}" target="_blank" style="color: #00e5ff; font-weight: 600;">Render Live URL</a><br>
+        ⚡ <b>Local Network</b>: <a href="{mobile_native_url}" target="_blank" style="color: #00f098; font-weight: 600;">/mobile (FastAPI)</a><br>
+        📲 <b>iOS PWA</b>: Safari Share → <i>Add to Home Screen</i>
     </div>
     """, unsafe_allow_html=True)
 

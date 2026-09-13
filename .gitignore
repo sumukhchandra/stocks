@@ -19,6 +19,7 @@ logs/
 *.json
 !QA/configs/*.json
 !static/manifest.json
+!frontend/mobile/manifest.json
 ml_models/models/saved_models/return_regressor_extratrees.joblib
 
 # IDEs

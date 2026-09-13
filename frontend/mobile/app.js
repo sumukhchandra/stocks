@@ -8,7 +8,11 @@ const STORAGE_KEY_URL = "nse_backend_url";
 const STORAGE_KEY_KEY = "nse_backend_key";
 
 // Default settings
-let backendUrl = localStorage.getItem(STORAGE_KEY_URL) || (window.location.port === "8000" ? window.location.origin : "http://localhost:8000");
+let backendUrl = localStorage.getItem(STORAGE_KEY_URL) || (
+  window.location.protocol === "https:"
+    ? "https://nse-alpha-backend-sumuk.loca.lt"
+    : (window.location.port === "8000" ? window.location.origin : "http://localhost:8000")
+);
 let apiKey = localStorage.getItem(STORAGE_KEY_KEY) || "nse_secret_alpha_2026";
 let activeTab = "tab-markets";
 let isOnline = false;

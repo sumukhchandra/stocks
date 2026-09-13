@@ -142,8 +142,8 @@ class MarketAnalyzer:
 
             # Quote info
             q_info = quotes_lookup.get(symbol)
-            curr_p = float(q_info["price"]) if q_info and q_info["price"] > 0 else close_p
-            chg_pct = float(q_info["change_pct"]) if q_info else float(last.get("returns", 0.0) * 100)
+            curr_p = float(q_info["price"]) if (q_info is not None and float(q_info.get("price", 0)) > 0) else close_p
+            chg_pct = float(q_info["change_pct"]) if q_info is not None else float(last.get("returns", 0.0) * 100)
 
             # 1. RSI (14)
             rsi = float(last.get("rsi_14", 50.0))

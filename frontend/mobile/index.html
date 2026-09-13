@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>NSE Stocks AI — Mobile Terminal</title>
+  
+  <!-- Apple Native PWA Capabilities -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="NSE Stocks" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#080b11" />
+  
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <link rel="icon" type="image/png" href="./apple-touch-icon.png" />
+  <link rel="manifest" href="./manifest.json" />
+
+  <link rel="stylesheet" href="style.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <!-- Header Bar -->
+  <header class="app-header">
+    <div class="brand">
+      <span class="logo-icon">⚡</span>
+      <span class="brand-text">NSE Alpha</span>
+    </div>
+    <div id="connectionBadge" class="connection-badge disconnected">
+      <span class="pulse-dot"></span>
+      <span id="connectionText">Checking...</span>
+    </div>
+  </header>
+
+  <!-- Main Scrollable Content Area -->
+  <main class="content-container">
+    
+    <!-- Tab 1: Markets Overview -->
+    <section id="tab-markets" class="tab-view active">
+      <div class="market-hero-card">
+        <div class="hero-header">
+          <span class="hero-label">MARKET SENTIMENT</span>
+          <span id="sentimentLabel" class="sentiment-badge">NEUTRAL</span>
+        </div>
+        <div class="sentiment-score-row">
+          <div id="sentimentScore" class="score-number">50.0</div>
+          <div class="score-subtext">/ 100 Breadth Score</div>
+        </div>
+        <div class="sentiment-bar-track">
+          <div id="sentimentBar" class="sentiment-bar-fill" style="width: 50%;"></div>
+        </div>
+        <div class="breadth-stats-row">
+          <div class="b-stat"><span class="b-dot green"></span> Advances: <b id="advCount">0</b></div>
+          <div class="b-stat"><span class="b-dot red"></span> Declines: <b id="decCount">0</b></div>
+          <div class="b-stat"><span class="b-dot gray"></span> Ratio: <b id="advDecRatio">1.0</b></div>
+        </div>
+      </div>
+
+      <div class="section-title">Sector Rotation</div>
+      <div id="sectorGrid" class="sector-grid">
+        <!-- Rendered dynamically -->
+        <div class="loading-state">Loading sector dynamics...</div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Screener Matrix -->
+    <section id="tab-screener" class="tab-view">
+      <div class="section-title">Technical Screener Matrix</div>
+      <div id="screenerList" class="screener-list">
+        <!-- Rendered dynamically -->
+        <div class="loading-state">Loading technical indicators...</div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Signals & Opportunities -->
+    <section id="tab-signals" class="tab-view">
+      <div class="section-title">Algorithmic Intraday Setups</div>
+      <div id="signalsList" class="signals-list">
+        <!-- Rendered dynamically -->
+        <div class="loading-state">Scanning breakout opportunities...</div>
+      </div>
+    </section>
+
+    <!-- Tab 4: Portfolio & Capital -->
+    <section id="tab-portfolio" class="tab-view">
+      <div class="portfolio-hero-card">
+        <div class="p-label">TOTAL EQUITY</div>
+        <div id="totalEquity" class="p-equity">₹10,000</div>
+        <div class="p-sub-row">
+          <div>Cash: <b id="availCash">₹10,000</b></div>
+          <div>Active Risk: <b id="activeRisk">₹0</b></div>
+        </div>
+      </div>
+
+      <div class="section-title">Active Positions</div>
+      <div id="positionsList" class="positions-list">
+        <div class="empty-state">No open positions right now.</div>
+      </div>
+
+      <button id="btnRunCycle" class="btn-primary" style="margin-top: 16px;">
+        ⚡ Trigger Scan-and-Trade Cycle
+      </button>
+    </section>
+
+    <!-- Tab 5: Settings & Backend API -->
+    <section id="tab-settings" class="tab-view">
+      <div class="settings-card">
+        <div class="settings-title">Backend API Connection</div>
+        <p class="settings-desc">
+          Connect this mobile client to your local laptop or cloud trading engine.
+        </p>
+
+        <label class="form-label" for="backendUrlInput">Backend API URL</label>
+        <input type="url" id="backendUrlInput" class="form-input" placeholder="http://192.168.1.5:8000" />
+
+        <label class="form-label" for="apiKeyInput" style="margin-top: 12px;">X-API-Key</label>
+        <input type="password" id="apiKeyInput" class="form-input" placeholder="Enter API Key" />
+
+        <div class="btn-row" style="margin-top: 16px;">
+          <button id="btnSaveSettings" class="btn-primary">Save & Connect</button>
+          <button id="btnTestConnection" class="btn-secondary">Test Connection</button>
+        </div>
+
+        <div id="connectionStatusLog" class="status-log"></div>
+      </div>
+
+      <div class="settings-card" style="margin-top: 14px;">
+        <div class="settings-title">📱 iOS Installation Guide</div>
+        <ol class="guide-steps">
+          <li>Tap the <b>Share button</b> (square with up arrow in Safari).</li>
+          <li>Scroll down and tap <b>"Add to Home Screen"</b>.</li>
+          <li>Confirm with <b>"Add"</b>. The app opens in fullscreen mode without browser bars!</li>
+        </ol>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Bottom Navigation Bar -->
+  <nav class="bottom-nav">
+    <button class="nav-item active" data-tab="tab-markets">
+      <span class="nav-icon">📈</span>
+      <span class="nav-label">Markets</span>
+    </button>
+    <button class="nav-item" data-tab="tab-screener">
+      <span class="nav-icon">🔍</span>
+      <span class="nav-label">Screener</span>
+    </button>
+    <button class="nav-item" data-tab="tab-signals">
+      <span class="nav-icon">⚡</span>
+      <span class="nav-label">Signals</span>
+    </button>
+    <button class="nav-item" data-tab="tab-portfolio">
+      <span class="nav-icon">💼</span>
+      <span class="nav-label">Portfolio</span>
+    </button>
+    <button class="nav-item" data-tab="tab-settings">
+      <span class="nav-icon">⚙️</span>
+      <span class="nav-label">Settings</span>
+    </button>
+  </nav>
+
+  <script src="app.js"></script>
+</body>
+</html>

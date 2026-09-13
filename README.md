@@ -122,3 +122,16 @@ Every simulated and live trade strictly accounts for:
 - **Stamp Duty**: 0.003% on buy turnover
 - **Short-Term Capital Gains (STCG)**: 25% flat tax on net gains
 - **Trade Viability Gating**: Orders are only executed if predicted return yields positive net profit after all the above frictions.
+
+---
+
+## 📱 Mobile App & Decoupled Architecture (Offline Frontend + Local/Cloud Backend)
+
+The system features a **decoupled client-server architecture**:
+- **Backend API (`apps/api/src/main.py`)**: Runs locally on your PC/laptop (or cloud VM) on port 8000. Houses the intensive CatBoost, XGBoost, LightGBM models, live market data feeds, and trade execution logic. Protected with `X-API-Key` header authentication (`NSE_BACKEND_API_KEY`).
+- **Mobile Terminal (`frontend/mobile/`)**: High-performance, OLED-dark native-feel PWA built with pure vanilla JS/CSS. Features real-time market sentiment gauges, technical screener matrix, intraday breakouts, portfolio monitoring, and one-tap trade cycle execution.
+- **Auto-Updating on GitHub**: The mobile frontend is automatically deployed to GitHub Pages via `.github/workflows/deploy_frontend.yml`. Whenever you edit frontend files and push to GitHub, the mobile app automatically updates without restarting the backend!
+
+### Quick Launch Scripts:
+- `START_PERMANENT_TERMINAL.bat`: Launches FastAPI backend on port 8000, Streamlit terminal on port 8501, public mobile tunnel, and opens the mobile interface.
+- `STOP_TERMINAL.bat`: Safely and completely terminates all background servers and tunnels.

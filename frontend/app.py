@@ -429,6 +429,26 @@ st.sidebar.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
+# ─── Backend API Connection & Architecture ───────────────────────────────────
+from frontend.api_client import api_client
+
+with st.sidebar.expander("🔑 Backend API & Cloud Engine", expanded=False):
+    st.markdown("""
+    <div style="font-size: 0.75rem; color: #94a3b8; line-height: 1.4; margin-bottom: 8px;">
+        Heavy ML models (CatBoost, XGBoost, LightGBM, Regressors) run on your backend service with API Key authentication.
+    </div>
+    """, unsafe_allow_html=True)
+    backend_url = st.text_input("Backend API URL", value=api_client.base_url, key="side_backend_url")
+    backend_key = st.text_input("X-API-Key", value=api_client.api_key, type="password", key="side_backend_key")
+    if st.button("Test & Reconnect", key="btn_side_reconnect"):
+        api_client.base_url = backend_url.rstrip("/")
+        api_client.api_key = backend_key
+        status_res = api_client.verify_connection()
+        if status_res["authenticated"]:
+            st.success("Connected to Backend Engine!")
+        else:
+            st.warning(f"Status: {status_res['message']}")
+
 # ─── Mobile App Connection ───────────────────────────────────────────────────
 qr_img_path = os.path.join(PARENT_DIR, "desktop", "mobile_qr.png")
 if not os.path.exists(qr_img_path):
@@ -439,20 +459,21 @@ if not os.path.exists(qr_img_path):
         pass
 
 mobile_url = "http://23.23.0.204:8501"
+mobile_native_url = "http://23.23.0.204:8000/mobile"
 
-with st.sidebar.expander("📱 Mobile App (Scan to Install)", expanded=True):
+with st.sidebar.expander("📱 Mobile App (PWA & Native)", expanded=True):
     st.markdown("""
     <div style="font-size: 0.76rem; color: #94a3b8; line-height: 1.35; margin-bottom: 6px;">
-        Scan with your phone camera to open on mobile, then tap <b>Add to Home Screen</b> to install as an app:
+        Scan with your phone camera to open on mobile, then tap <b>Add to Home Screen</b>:
     </div>
     """, unsafe_allow_html=True)
     if os.path.exists(qr_img_path):
-        st.image(qr_img_path, caption=f"WiFi URL: {mobile_url}", use_container_width=True)
+        st.image(qr_img_path, caption=f"Mobile Terminal", use_container_width=True)
     st.markdown(f"""
     <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px; line-height: 1.4;">
-        🔗 <a href="{mobile_url}" target="_blank" style="color: #00e5ff; font-weight: 600;">{mobile_url}</a><br>
-        📱 <b>iOS</b>: Share → <i>Add to Home Screen</i><br>
-        🤖 <b>Android</b>: Menu → <i>Install App</i>
+        ⚡ <b>Terminal Link</b>: <a href="{mobile_url}" target="_blank" style="color: #00e5ff; font-weight: 600;">{mobile_url}</a><br>
+        📱 <b>Lightweight Client</b>: <a href="{mobile_native_url}" target="_blank" style="color: #00f098; font-weight: 600;">/mobile (FastAPI)</a><br>
+        📲 <b>iOS</b>: Share → <i>Add to Home Screen</i> (Fullscreen App)
     </div>
     """, unsafe_allow_html=True)
 

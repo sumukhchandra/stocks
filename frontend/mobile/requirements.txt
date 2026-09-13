@@ -1,0 +1,2 @@
+# Lightweight standalone dependencies for Render Web Service
+# Pure standard library - 0 external packages required for instant build

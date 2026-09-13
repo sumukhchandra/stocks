@@ -39,6 +39,8 @@ from database.stocks_config import (
     AUTO_EOD_SQUAREOFF_MINUTE,
     SCAN_INTERVAL_SECONDS,
 )
+from backend.market_data_feed import market_feed
+from backend.market_analyzer import market_analyzer
 
 # ─── Page Config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -263,7 +265,65 @@ st.markdown("""
         font-family: 'JetBrains Mono', monospace;
         font-size: 0.8rem;
         font-weight: 600;
-        margin-right: 6px;
+    /* ─── Mobile App Native PWA Optimizations ──────────────────────────── */
+    @media (max-width: 768px) {
+        /* Hide all Streamlit browser chrome for native mobile feel */
+        #MainMenu, header, footer, [data-testid="stHeader"], [data-testid="stToolbar"] {
+            display: none !important;
+        }
+
+        /* Fullscreen app spacing with iOS safe-area insets */
+        .block-container {
+            padding-top: max(12px, env(safe-area-inset-top)) !important;
+            padding-bottom: max(24px, env(safe-area-inset-bottom)) !important;
+            padding-left: 10px !important;
+            padding-right: 10px !important;
+            max-width: 100vw !important;
+        }
+
+        /* Native touch feel & no unwanted text selection */
+        * {
+            -webkit-tap-highlight-color: transparent !important;
+        }
+
+        /* Responsive terminal header */
+        .terminal-header {
+            padding: 12px 14px !important;
+            border-radius: 12px !important;
+            margin-bottom: 12px !important;
+        }
+
+        .terminal-title {
+            font-size: 1.15rem !important;
+        }
+
+        /* Metric cards in 2-column touch grid */
+        div[data-testid="column"] {
+            min-width: 47% !important;
+            flex: 1 1 47% !important;
+            margin-bottom: 6px !important;
+        }
+
+        div[data-testid="stMetricValue"] {
+            font-size: 1.15rem !important;
+        }
+
+        div[data-testid="stMetricLabel"] {
+            font-size: 0.75rem !important;
+        }
+
+        /* Glass cards */
+        .glass-card {
+            padding: 14px 12px !important;
+            border-radius: 12px !important;
+            margin-bottom: 12px !important;
+        }
+
+        /* Mobile opportunity cards */
+        .opp-card {
+            padding: 12px !important;
+            margin-bottom: 10px !important;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -288,82 +348,18 @@ def get_simulation_engine():
     return SimulationEngine()
 
 
-@st.cache_data(ttl=15, show_spinner=False)
+@st.cache_data(ttl=5, show_spinner=False)
 def fetch_latest_prices(symbols_tuple):
-    """Fetch latest 1-minute prices for real-time terminal display with resilient scan fallback."""
-    rows = []
-    now = datetime.now()
-    try:
-        data = yf.download(
-            list(symbols_tuple), period="1d", interval="1m",
-            progress=False, group_by="ticker", threads=False,
-        )
-        for symbol in symbols_tuple:
-            try:
-                frame = data[symbol] if isinstance(data.columns, pd.MultiIndex) else data
-                frame = frame.dropna()
-                if frame.empty:
-                    continue
-                latest = frame.iloc[-1]
-                prev_close = frame.iloc[0]["Close"] if len(frame) > 1 else latest["Close"]
-                curr_price = float(latest["Close"])
-                chg_pct = ((curr_price / float(prev_close)) - 1) * 100 if prev_close else 0.0
-                rows.append({
-                    "timestamp": now,
-                    "symbol": symbol,
-                    "company": STOCK_UNIVERSE.get(symbol, symbol),
-                    "price": curr_price,
-                    "change_pct": chg_pct,
-                    "high": float(latest.get("High", curr_price)),
-                    "low": float(latest.get("Low", curr_price)),
-                    "volume": float(latest.get("Volume", 0)),
-                })
-            except Exception:
-                continue
-    except Exception:
-        pass
-
-    # Instant Fallback to latest scanner state if yfinance is rate-limited
-    if len(rows) < len(symbols_tuple):
-        try:
-            tr = get_trader()
-            tr._reload_state()
-            existing_syms = {r["symbol"] for r in rows}
-            for s in tr.state.get("last_signals", []):
-                sym = s.get("symbol")
-                if sym in symbols_tuple and sym not in existing_syms:
-                    p = float(s.get("price", 0))
-                    if p > 0:
-                        rows.append({
-                            "timestamp": now,
-                            "symbol": sym,
-                            "company": STOCK_UNIVERSE.get(sym, sym),
-                            "price": p,
-                            "change_pct": 0.0,
-                            "high": p,
-                            "low": p,
-                            "volume": 0,
-                        })
-        except Exception:
-            pass
-
-    return pd.DataFrame(rows)
+    """Fetch latest real-time prices via FastMarketDataFeed with in-memory TTL caching."""
+    from backend.market_data_feed import market_feed
+    return market_feed.get_realtime_quotes(list(symbols_tuple))
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=25, show_spinner=False)
 def fetch_live_feature_dataset():
-    """Fetch live market candles and quantitative features."""
-    try:
-        tr = get_trader()
-        df = tr._fetch_live_data()
-        if not df.empty:
-            return df
-    except Exception:
-        pass
-    data_path = os.path.join(PARENT_DIR, "data", "processed", "master_labeled_dataset.parquet")
-    if os.path.exists(data_path):
-        return pd.read_parquet(data_path)
-    return pd.DataFrame()
+    """Fetch live market candles and quantitative features via FastMarketDataFeed."""
+    from backend.market_data_feed import market_feed
+    return market_feed.get_live_feature_dataset()
 
 
 # ─── Market Session Helper ───────────────────────────────────────────────────
@@ -419,6 +415,47 @@ side_c3, side_c4 = st.sidebar.columns(2)
 side_c3.metric("Win Rate", f"{summary['win_rate']:.1f}%")
 side_c4.metric("Active Pos", summary["active_positions"])
 
+st.sidebar.markdown("---")
+st.sidebar.markdown("""
+<div style="background: rgba(13, 20, 35, 0.7); border: 1px solid #1e293b; border-radius: 8px; padding: 12px; margin-top: 4px;">
+    <div style="font-size: 0.75rem; font-weight: 700; color: #00e5ff; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">
+        🖥️ Physical Desktop App
+    </div>
+    <div style="font-size: 0.76rem; color: #94a3b8; line-height: 1.4;">
+        Status: <b style="color: #00f098;">Native Windows Window</b><br>
+        Repo: <a href="https://github.com/sumukhchandra/stocks" target="_blank" style="color: #38bdf8; text-decoration: none;">sumukhchandra/stocks</a><br>
+        Auto-Sync: <span style="color: #00f098;">Pull on Start</span>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+# ─── Mobile App Connection ───────────────────────────────────────────────────
+qr_img_path = os.path.join(PARENT_DIR, "desktop", "mobile_qr.png")
+if not os.path.exists(qr_img_path):
+    try:
+        from desktop.generate_mobile_qr import generate_qr
+        generate_qr()
+    except Exception:
+        pass
+
+mobile_url = "http://23.23.0.204:8501"
+
+with st.sidebar.expander("📱 Mobile App (Scan to Install)", expanded=True):
+    st.markdown("""
+    <div style="font-size: 0.76rem; color: #94a3b8; line-height: 1.35; margin-bottom: 6px;">
+        Scan with your phone camera to open on mobile, then tap <b>Add to Home Screen</b> to install as an app:
+    </div>
+    """, unsafe_allow_html=True)
+    if os.path.exists(qr_img_path):
+        st.image(qr_img_path, caption=f"WiFi URL: {mobile_url}", use_container_width=True)
+    st.markdown(f"""
+    <div style="font-size: 0.72rem; color: #94a3b8; margin-top: 4px; line-height: 1.4;">
+        🔗 <a href="{mobile_url}" target="_blank" style="color: #00e5ff; font-weight: 600;">{mobile_url}</a><br>
+        📱 <b>iOS</b>: Share → <i>Add to Home Screen</i><br>
+        🤖 <b>Android</b>: Menu → <i>Install App</i>
+    </div>
+    """, unsafe_allow_html=True)
+
 # ─── Top Command Header Bar ──────────────────────────────────────────────────
 is_open, is_pre, ist_time = get_market_status()
 is_tr_active = trader.state.get("is_trading", False)
@@ -457,142 +494,202 @@ st.markdown(f"""
 if page == "📊 Market Overview":
     st.markdown("""
     <div style="margin-bottom: 20px;">
-        <div style="font-size: 1.6rem; font-weight: 800; color: #fff;">📊 NSE Market Overview & Technical Terminal</div>
+        <div style="font-size: 1.6rem; font-weight: 800; color: #fff; display: flex; align-items: center; gap: 10px;">
+            📊 <span>NSE Market Intelligence & Quantitative Screener</span>
+        </div>
         <div style="font-size: 0.9rem; color: #94a3b8;">
-            Real-time multi-timeframe candlestick technical charts, volume orderflow, dynamic indicators (EMA 20, EMA 50, VWAP), and live AI quant confidence rankings.
+            Real-time market breadth radar, sector rotation, full technical indicator matrix (RSI, MACD, SuperTrend, EMA crosses, VWAP, RVOL), automated intraday breakout screener, and interactive candlestick charting.
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-    # Action Bar
-    col_act1, col_act2 = st.columns([2, 5])
-    with col_act1:
-        if st.button("🔄 Refresh Market Data", use_container_width=True, type="primary"):
-            st.cache_data.clear()
-            st.rerun()
-    with col_act2:
-        now_str = datetime.now().strftime('%H:%M:%S')
-        st.caption(f"Last updated: {now_str} IST | Monitored Universe: {len(STOCK_SYMBOLS)} Top NIFTY Stocks | Zero-Lag Ingestion")
+    quotes_df = fetch_latest_prices(tuple(STOCK_SYMBOLS))
+    feat_df = fetch_live_feature_dataset()
+    overview = market_analyzer.analyze_market_overview(quotes_df, feat_df)
+    screener_df = market_analyzer.compute_technical_screener(feat_df, quotes_df)
+    opps = market_analyzer.scan_breakout_opportunities(feat_df)
 
-    # Interactive Candlestick / Stock Inspector & Live AI Signals
-    col_chart, col_signals = st.columns([5, 4])
+    # 1. Top Market Breadth Bar
+    col_mb1, col_mb2, col_mb3, col_mb4 = st.columns(4)
+    
+    sent_class = "status-live" if "BULLISH" in overview["sentiment"] else "status-pre" if "NEUTRAL" in overview["sentiment"] else "status-closed"
+    col_mb1.markdown(f"""
+    <div class="glass-card" style="padding: 14px 18px; margin: 0;">
+        <div style="font-size: 0.78rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;">Market Sentiment</div>
+        <div style="font-size: 1.35rem; font-weight: 800; color: #fff; margin: 4px 0;">{overview['sentiment']}</div>
+        <div style="font-size: 0.8rem; color: #00e5ff;">Sentiment Score: {overview['sentiment_score']}/100</div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with col_chart:
-        st.markdown("<div class='card-title'>📈 Real-Time Technical Candlestick Inspector</div>", unsafe_allow_html=True)
+    col_mb2.metric(
+        "Market Breadth (A/D)",
+        f"{overview['advance_count']} Adv / {overview['decline_count']} Dec",
+        f"{overview['adv_dec_ratio']:.2f}x Ratio",
+    )
+    col_mb3.metric(
+        "Universe Avg Return",
+        f"{overview['avg_change_pct']:+.2f}%",
+        f"{'🟢 Bullish Edge' if overview['avg_change_pct'] > 0 else '🔴 Bearish Drift'}",
+    )
+    
+    tg = overview.get("top_gainer")
+    tg_display = f"{tg['company'][:12]} ({tg['change_pct']:+.2f}%)" if tg else "None"
+    col_mb4.metric("Top Leader", tg_display, f"₹{tg['price']:,.2f}" if tg else "")
+
+    st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+
+    # 2. Sector Performance Heatmap
+    if overview.get("sector_performance"):
+        st.markdown("<div class='card-title'>🌐 Sector Rotation & Breadth</div>", unsafe_allow_html=True)
+        sec_cols = st.columns(len(overview["sector_performance"]))
+        for idx, (sec_name, s_data) in enumerate(overview["sector_performance"].items()):
+            chg_val = s_data["avg_change"]
+            c_color = "var(--profit-emerald)" if chg_val > 0 else "var(--loss-ruby)" if chg_val < 0 else "var(--text-secondary)"
+            with sec_cols[idx]:
+                st.markdown(f"""
+                <div class="glass-card" style="padding: 10px 14px; margin: 0; text-align: center;">
+                    <div style="font-size: 0.75rem; font-weight: 700; color: #94a3b8; text-transform: uppercase;">{sec_name}</div>
+                    <div style="font-size: 1.25rem; font-weight: 800; color: {c_color}; margin: 2px 0;">{chg_val:+.2f}%</div>
+                    <div style="font-size: 0.72rem; color: #64748b;">{s_data['count']} stocks tracked</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+
+    # 3. Automated Intraday Opportunity Radar
+    if opps:
+        st.markdown("<div class='card-title'>⚡ Live AI Opportunity Radar (Breakouts & Rebounds)</div>", unsafe_allow_html=True)
+        opp_cols = st.columns(min(len(opps), 3))
+        for idx, opp in enumerate(opps[:3]):
+            with opp_cols[idx]:
+                st.markdown(f"""
+                <div class="glass-card" style="padding: 14px 18px; margin: 0; border-left: 3px solid {opp['badge_color']};">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span style="font-size: 0.78rem; font-weight: 700; color: {opp['badge_color']}; text-transform: uppercase;">{opp['type']}</span>
+                        <span style="font-size: 0.75rem; color: #ffb703; font-weight: 600;">{opp['conviction']} CONVICTION</span>
+                    </div>
+                    <div style="font-size: 1.15rem; font-weight: 800; color: #fff; margin: 6px 0 2px 0;">{opp['company']}</div>
+                    <div style="font-size: 0.8rem; color: #94a3b8; margin-bottom: 8px;">{opp['description']}</div>
+                    <div style="display: flex; justify-content: space-between; font-size: 0.82rem; font-family: 'JetBrains Mono', monospace;">
+                        <span>Price: <b>₹{opp['price']:,.2f}</b></span>
+                        <span style="color: #00f098;">Target: <b>₹{opp['target']:,.2f}</b></span>
+                        <span style="color: #ff3366;">Stop: <b>₹{opp['stop_loss']:,.2f}</b></span>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+        st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+
+    # 4. Quantitative Technical Screener Matrix
+    st.markdown("<div class='card-title'>🔍 Real-Time Quantitative Technical Screener Matrix</div>", unsafe_allow_html=True)
+    if not screener_df.empty:
+        display_screener = screener_df[[
+            "symbol", "company", "sector", "price", "change_pct",
+            "rsi_14", "rsi_state", "macd_state", "supertrend",
+            "ema_trend", "vwap_dist_pct", "rvol", "action_badge"
+        ]].copy()
+        display_screener.columns = [
+            "Symbol", "Company", "Sector", "Price (₹)", "Change %",
+            "RSI (14)", "RSI Condition", "MACD Signal", "SuperTrend",
+            "EMA Alignment", "VWAP Dist %", "RVOL", "Composite Bias"
+        ]
+        display_screener["Price (₹)"] = display_screener["Price (₹)"].map(lambda x: f"₹{x:,.2f}")
+        display_screener["Change %"] = display_screener["Change %"].map(lambda x: f"{x:+.2f}%")
+        display_screener["VWAP Dist %"] = display_screener["VWAP Dist %"].map(lambda x: f"{x:+.2f}%")
+        display_screener["RVOL"] = display_screener["RVOL"].map(lambda x: f"{x:.2f}x")
+        st.dataframe(display_screener, use_container_width=True, hide_index=True)
+    else:
+        st.info("Technical indicator matrix calculating. Ingesting live bars...")
+
+    st.markdown("<div style='height: 16px;'></div>", unsafe_allow_html=True)
+
+    # 5. Interactive Candlestick Inspector
+    st.markdown("<div class='card-title'>📈 High-Frequency Interactive Candlestick Inspector</div>", unsafe_allow_html=True)
+    c_ctrl1, c_ctrl2, c_ctrl3 = st.columns([3, 2, 5])
+    with c_ctrl1:
         sel_symbol = st.selectbox(
-            "Select Ticker to Inspect",
+            "Select Stock Ticker",
             STOCK_SYMBOLS,
             format_func=lambda s: f"{s} — {STOCK_UNIVERSE.get(s, s)}",
             index=0,
+            key="market_inspect_symbol",
+        )
+    with c_ctrl2:
+        sel_timeframe = st.selectbox(
+            "Bar Timeframe",
+            ["5m (Intraday)", "1m (High Freq)", "15m (Swing)", "1d (Daily)"],
+            index=0,
+            key="market_inspect_tf",
+        )
+    with c_ctrl3:
+        now_str = datetime.now().strftime('%H:%M:%S')
+        st.caption(f"Showing live candlestick price action for {STOCK_UNIVERSE.get(sel_symbol, sel_symbol)} | Updated: {now_str} IST")
+
+    tf_code = "5m" if "5m" in sel_timeframe else "1m" if "1m" in sel_timeframe else "15m" if "15m" in sel_timeframe else "1d"
+    period_code = "5d" if tf_code == "5m" else "1d" if tf_code == "1m" else "1mo" if tf_code == "15m" else "1y"
+
+    chart_df = market_feed.get_chart_history(sel_symbol, timeframe=tf_code, period=period_code)
+    if not chart_df.empty and len(chart_df) >= 10:
+        recent_bars = chart_df.tail(80)
+        fig = make_subplots(
+            rows=2, cols=1, shared_xaxes=True,
+            vertical_spacing=0.06,
+            row_heights=[0.75, 0.25],
         )
 
-        try:
-            stock_data = yf.download(
-                sel_symbol, period="5d", interval="5m", progress=False, group_by="column"
-            )
-            if not stock_data.empty:
-                if isinstance(stock_data.columns, pd.MultiIndex):
-                    stock_data.columns = [c[0].lower() for c in stock_data.columns]
-                else:
-                    stock_data.columns = [c.lower() for c in stock_data.columns]
+        # Candlesticks
+        fig.add_trace(go.Candlestick(
+            x=recent_bars["timestamp"],
+            open=recent_bars["open"], high=recent_bars["high"],
+            low=recent_bars["low"], close=recent_bars["close"],
+            name="Price",
+            increasing_line_color="#00f098", decreasing_line_color="#ff3366",
+        ), row=1, col=1)
 
-                # Compute EMA 20, EMA 50, VWAP
-                stock_data["ema_20"] = stock_data["close"].ewm(span=20, adjust=False).mean()
-                stock_data["ema_50"] = stock_data["close"].ewm(span=50, adjust=False).mean()
-                v = stock_data["volume"].replace(0, np.nan).fillna(0)
-                stock_data["vwap"] = (stock_data["close"] * v).cumsum() / v.cumsum().replace(0, np.nan)
+        # Overlays
+        if "ema_9" in recent_bars.columns:
+            fig.add_trace(go.Scatter(
+                x=recent_bars["timestamp"], y=recent_bars["ema_9"],
+                line=dict(color="#00e5ff", width=1.5), name="EMA 9",
+            ), row=1, col=1)
+        if "ema_21" in recent_bars.columns:
+            fig.add_trace(go.Scatter(
+                x=recent_bars["timestamp"], y=recent_bars["ema_21"],
+                line=dict(color="#ffb703", width=1.5), name="EMA 21",
+            ), row=1, col=1)
+        if "vwap" in recent_bars.columns:
+            fig.add_trace(go.Scatter(
+                x=recent_bars["timestamp"], y=recent_bars["vwap"],
+                line=dict(color="#a855f7", width=1.5, dash="dot"), name="VWAP",
+            ), row=1, col=1)
+        if "bb_upper" in recent_bars.columns:
+            fig.add_trace(go.Scatter(
+                x=recent_bars["timestamp"], y=recent_bars["bb_upper"],
+                line=dict(color="rgba(255,255,255,0.25)", width=1, dash="dash"), name="BB Upper",
+            ), row=1, col=1)
+            fig.add_trace(go.Scatter(
+                x=recent_bars["timestamp"], y=recent_bars["bb_lower"],
+                line=dict(color="rgba(255,255,255,0.25)", width=1, dash="dash"), name="BB Lower",
+            ), row=1, col=1)
 
-                recent_bars = stock_data.tail(75)
+        # Volume
+        colors = ["#00f098" if c >= o else "#ff3366" for o, c in zip(recent_bars["open"], recent_bars["close"])]
+        fig.add_trace(go.Bar(
+            x=recent_bars["timestamp"], y=recent_bars["volume"],
+            marker_color=colors, opacity=0.7, name="Volume",
+        ), row=2, col=1)
 
-                fig = make_subplots(
-                    rows=2, cols=1, shared_xaxes=True,
-                    vertical_spacing=0.06,
-                    row_heights=[0.75, 0.25],
-                )
-
-                # Candlesticks
-                fig.add_trace(go.Candlestick(
-                    x=recent_bars.index,
-                    open=recent_bars["open"], high=recent_bars["high"],
-                    low=recent_bars["low"], close=recent_bars["close"],
-                    name="Candles",
-                    increasing_line_color="#00f098", decreasing_line_color="#ff3366",
-                ), row=1, col=1)
-
-                # EMAs & VWAP
-                fig.add_trace(go.Scatter(
-                    x=recent_bars.index, y=recent_bars["ema_20"],
-                    line=dict(color="#00e5ff", width=1.5), name="EMA 20",
-                ), row=1, col=1)
-                fig.add_trace(go.Scatter(
-                    x=recent_bars.index, y=recent_bars["ema_50"],
-                    line=dict(color="#ffb703", width=1.5), name="EMA 50",
-                ), row=1, col=1)
-                fig.add_trace(go.Scatter(
-                    x=recent_bars.index, y=recent_bars["vwap"],
-                    line=dict(color="#a855f7", width=1.5, dash="dot"), name="VWAP",
-                ), row=1, col=1)
-
-                # Volume
-                colors = ["#00f098" if c >= o else "#ff3366" for o, c in zip(recent_bars["open"], recent_bars["close"])]
-                fig.add_trace(go.Bar(
-                    x=recent_bars.index, y=recent_bars["volume"],
-                    marker_color=colors, opacity=0.7, name="Volume",
-                ), row=2, col=1)
-
-                fig.update_layout(
-                    template="plotly_dark",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(15,21,32,0.6)",
-                    height=440,
-                    margin=dict(l=10, r=10, t=10, b=10),
-                    xaxis_rangeslider_visible=False,
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            else:
-                st.warning("Candle data temporarily unavailable.")
-        except Exception as e:
-            st.info(f"Candlestick chart loading: {e}")
-
-    with col_signals:
-        st.markdown("<div class='card-title'>🤖 Live AI Quant Signals & Confidence Gate</div>", unsafe_allow_html=True)
-        try:
-            from ml_models.models.final_ensemble_engine import FinalEnsembleEngine
-            feat_df = fetch_live_feature_dataset()
-            if not feat_df.empty:
-                engine = FinalEnsembleEngine()
-                tax_eng = get_tax_engine()
-
-                rows = []
-                for sym in STOCK_SYMBOLS:
-                    w = feat_df[feat_df["symbol"] == sym].sort_values("timestamp").tail(50).fillna(0)
-                    if len(w) < 16:
-                        continue
-                    decision = engine.evaluate_state(w)
-                    p_win = decision["final_probability"]
-                    exp_ret = decision.get("expected_return", 0)
-                    viable, bd = tax_eng.is_trade_viable(100000, exp_ret)
-
-                    action_str = "🟢 BUY" if p_win >= 0.60 and viable else "🟡 WATCH" if p_win >= 0.52 else "🛡 HOLD"
-                    rows.append({
-                        "Symbol": sym.replace(".NS", ""),
-                        "Company": STOCK_UNIVERSE.get(sym, sym)[:12],
-                        "P(Win)": f"{p_win*100:.1f}%",
-                        "Exp. Return": f"{exp_ret*100:+.2f}%",
-                        "Net (Cost)": f"{bd['net_profit']/1000:+.1f}k",
-                        "Action": action_str,
-                    })
-
-                if rows:
-                    sig_table = pd.DataFrame(rows).sort_values("P(Win)", ascending=False)
-                    st.dataframe(sig_table, use_container_width=True, hide_index=True)
-                else:
-                    st.info("Feature dataset warmup in progress.")
-            else:
-                st.info("Ingesting market state features...")
-        except Exception as err:
-            st.error(f"Signal evaluation: {err}")
+        fig.update_layout(
+            template="plotly_dark",
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(15,21,32,0.6)",
+            height=460,
+            margin=dict(l=10, r=10, t=10, b=10),
+            xaxis_rangeslider_visible=False,
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info(f"Loading {sel_symbol} candles for {sel_timeframe}...")
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -739,182 +836,190 @@ elif page == "🔴 Live Trading":
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # 3. Active Positions Table
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    st.markdown("<div class='card-title'>📋 Active Open Positions & Live Unrealized P&L</div>", unsafe_allow_html=True)
-    positions = trader.state.get("positions", {})
-    if positions:
-        pos_rows = []
-        for symbol, pos in positions.items():
-            entry_p = float(pos.get("entry_price", 0))
-            curr_price = entry_p
-            try:
-                p_df = fetch_latest_prices(tuple([symbol]))
-                if not p_df.empty:
-                    curr_price = float(p_df.iloc[0]["price"])
-            except Exception:
-                pass
+    # 3. Non-Blocking Real-Time Streaming Monitor (Fragment)
+    @st.fragment(run_every=5)
+    def render_live_trading_monitor():
+        quotes_df = market_feed.get_realtime_quotes()
+        price_map = quotes_df.set_index("symbol")["price"].to_dict() if not quotes_df.empty else {}
 
-            gross_return = (curr_price - entry_p) / entry_p if entry_p > 0 else 0.0
-            bd = get_tax_engine().calculate_total_cost(pos["invested"], gross_return)
-            try:
-                raw_time = pos.get("entry_time")
-                if isinstance(raw_time, str):
-                    entry_time = datetime.fromisoformat(raw_time)
-                else:
-                    entry_time = datetime.now()
-                hold_str = str(datetime.now() - entry_time).split(".")[0]
-            except Exception:
-                hold_str = "Active"
-
-            tp_p = float(pos.get("tp_price", entry_p * (1 + PROFIT_TARGET_PCT)))
-            sl_p = float(pos.get("sl_price", entry_p * (1 - MAX_GROSS_LOSS_PCT)))
-
-            pos_rows.append({
-                "Company": STOCK_UNIVERSE.get(symbol, symbol),
-                "Symbol": symbol.replace(".NS", ""),
-                "Entry Price": f"₹{entry_p:,.2f}",
-                "Current Price": f"₹{curr_price:,.2f}",
-                "Qty": f"{pos['qty']:.2f}",
-                "Invested": f"₹{pos['invested']:,.2f}",
-                "Target (+1.1%)": f"₹{tp_p:,.2f}",
-                "Stop Loss (-0.6%)": f"₹{sl_p:,.2f}",
-                "Gross P&L": f"₹{bd['gross_profit']:+,.2f}",
-                "Net P&L (Post-Tax)": f"₹{bd['net_profit']:+,.2f}",
-                "Net ROI": f"{bd['net_return_pct']:+.3f}%",
-                "Holding Time": hold_str,
-            })
-        st.dataframe(pd.DataFrame(pos_rows), use_container_width=True, hide_index=True)
-    else:
-        st.info(f"🛡️ No active open positions. Cash liquidity is 100% available (₹{summary['available_capital']:,.2f}) — AI is waiting for high-probability setups.")
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # 4. The Live Trade Audit & Execution Feed (Image 1)
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
-        <div class="card-title" style="margin: 0;">⚡ Live Real-Time Trade Audit & Execution Feed (BUY / HOLD / SELL / SCAN)</div>
-        <div style="font-size: 0.8rem; color: #94a3b8;">Continuously tracks all live positions being held, every buy/sell execution & scan decision</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    prices_df = fetch_latest_prices(tuple(STOCK_SYMBOLS))
-    price_map = prices_df.set_index("symbol")["price"].to_dict() if not prices_df.empty else {}
-    feed = trader.get_live_trade_feed(price_map=price_map)
-
-    scan_feed = [item for item in feed if item.get("_status_code") == "SCAN"]
-    order_feed = [item for item in feed if item.get("_status_code") in ("BOUGHT", "SOLD")]
-    holding_feed = [item for item in feed if item.get("_status_code") == "HOLDING"]
-
-    feed_tabs = st.tabs([
-        f"📡 Latest AI Scans [{len(scan_feed)}]",
-        f"⚡ All Events (Tape) [{len(feed)}]",
-        f"🟢 Executed Orders [{len(order_feed)}]",
-        f"🛡 Currently Holding [{len(holding_feed)}]",
-    ])
-
-    with feed_tabs[0]:
-        if scan_feed:
-            s_df = pd.DataFrame(scan_feed)
-            show_cols = [
-                "Timestamp", "Symbol", "Company", "Action / Status", "Current / Exit",
-                "Net ROI %", "Target (TP)", "Stop Loss (SL)", "AI Conf", "Details / Reason"
-            ]
-            st.dataframe(s_df[[c for c in show_cols if c in s_df.columns]], use_container_width=True, hide_index=True)
-        else:
-            st.info("Click 'Check Live Market Prices' or run an instant scan to view AI candle evaluations.")
-
-    with feed_tabs[1]:
-        if feed:
-            feed_df = pd.DataFrame(feed)
-            show_cols = [
-                "Timestamp", "Symbol", "Action / Status", "Entry Price", "Current / Exit",
-                "Qty", "Invested", "Gross P&L", "Net P&L (Post-Tax)", "Net ROI %",
-                "Hold Time", "Target (TP)", "Stop Loss (SL)", "AI Conf", "Details / Reason"
-            ]
-            st.dataframe(feed_df[[c for c in show_cols if c in feed_df.columns]], use_container_width=True, hide_index=True)
-        else:
-            st.info("No trading events recorded yet.")
-
-    with feed_tabs[2]:
-        if order_feed:
-            o_df = pd.DataFrame(order_feed)
-            show_cols = [
-                "Timestamp", "Symbol", "Action / Status", "Entry Price", "Current / Exit",
-                "Qty", "Invested", "Gross P&L", "Net P&L (Post-Tax)", "Net ROI %",
-                "Fees & Tax", "Hold Time", "AI Conf", "Details / Reason"
-            ]
-            st.dataframe(o_df[[c for c in show_cols if c in o_df.columns]], use_container_width=True, hide_index=True)
-        else:
-            st.info("No completed orders yet.")
-
-    with feed_tabs[3]:
-        if holding_feed:
-            h_df = pd.DataFrame(holding_feed)
-            show_cols = [
-                "Symbol", "Company", "Action / Status", "Entry Price", "Current / Exit",
-                "Qty", "Invested", "Gross P&L", "Net P&L (Post-Tax)", "Net ROI %",
-                "Hold Time", "Target (TP)", "Stop Loss (SL)", "AI Conf", "Details / Reason"
-            ]
-            st.dataframe(h_df[[c for c in show_cols if c in h_df.columns]], use_container_width=True, hide_index=True)
-        else:
-            st.info("No active holding positions. Capital is 100% liquid.")
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-    # 5. Live Market in the last
-    st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
-    p_hdr1, p_hdr2 = st.columns([6, 4])
-    with p_hdr1:
-        st.markdown("<div class='card-title' style='margin:0;'>📈 Live Market Prices & Real-Time Monitoring</div>", unsafe_allow_html=True)
-        st.caption("Inspect real-time NSE market prices, percentage changes, and session intraday ranges across all 10 stocks.")
-    with p_hdr2:
-        sub_c1, sub_c2 = st.columns([1.3, 1.1])
-        with sub_c1:
-            btn_check_prices = st.button("📈 Check Live Market Prices", use_container_width=True, type="primary")
-        with sub_c2:
-            auto_stream_mode = st.selectbox(
-                "Auto-Refresh Stream",
-                ["⚡ Live Stream (15s)", "⚡ Fast Stream (30s)", "Normal (60s)", "Cycle (180s)", "Manual (Paused)"],
-                index=0,
-                label_visibility="collapsed",
-                help="Auto-refreshes prices, AI scans, and order executions continuously on your screen.",
-            )
-
-    if btn_check_prices:
-        st.cache_data.clear()
-        trader._reload_state()
-
-    if not prices_df.empty:
-        cols_top = st.columns(5)
-        for i in range(min(5, len(prices_df))):
-            row = prices_df.iloc[i]
-            delta_val = f"{row['change_pct']:+.2f}%"
-            cols_top[i].metric(
-                row["company"][:14],
-                f"₹{row['price']:,.2f}",
-                delta_val,
-                help=f"High: ₹{row['high']:,.2f} | Low: ₹{row['low']:,.2f} | Vol: {row['volume']:,.0f}",
-            )
-        if len(prices_df) > 5:
-            cols_bot = st.columns(min(5, len(prices_df) - 5))
-            for i in range(5, min(10, len(prices_df))):
-                row = prices_df.iloc[i]
+        # 3.1 Live Market Ticker Tape
+        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div class="card-title" style="margin:0;">⚡ Live Real-Time Market Ticker (Sub-Second Feed • 5s Stream)</div>
+            <span class="status-pill status-live"><span class="pulsing-dot"></span> LIVE TICKER STREAM</span>
+        </div>
+        """, unsafe_allow_html=True)
+        if not quotes_df.empty:
+            cols_top = st.columns(5)
+            for i in range(min(5, len(quotes_df))):
+                row = quotes_df.iloc[i]
                 delta_val = f"{row['change_pct']:+.2f}%"
-                cols_bot[i - 5].metric(
-                    row["company"][:14],
+                cols_top[i].metric(
+                    row["company"][:13],
                     f"₹{row['price']:,.2f}",
                     delta_val,
                     help=f"High: ₹{row['high']:,.2f} | Low: ₹{row['low']:,.2f} | Vol: {row['volume']:,.0f}",
                 )
-    else:
-        st.info("Market prices currently fetching. Click 'Check Live Market Prices' to refresh.")
-    st.markdown("</div>", unsafe_allow_html=True)
+            if len(quotes_df) > 5:
+                cols_bot = st.columns(min(5, len(quotes_df) - 5))
+                for i in range(5, min(10, len(quotes_df))):
+                    row = quotes_df.iloc[i]
+                    delta_val = f"{row['change_pct']:+.2f}%"
+                    cols_bot[i - 5].metric(
+                        row["company"][:13],
+                        f"₹{row['price']:,.2f}",
+                        delta_val,
+                        help=f"High: ₹{row['high']:,.2f} | Low: ₹{row['low']:,.2f} | Vol: {row['volume']:,.0f}",
+                    )
+        else:
+            st.info("Market prices initializing...")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-    if auto_stream_mode != "Manual (Paused)":
-        sleep_sec = 15 if "15s" in auto_stream_mode else 30 if "30s" in auto_stream_mode else 60 if "60s" in auto_stream_mode else 180
-        time.sleep(sleep_sec)
-        st.rerun()
+        # 3.2 Active Holding Positions with Real-Time Unrealized P&L
+        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+        st.markdown("<div class='card-title'>📋 Active Open Positions & Live Unrealized P&L</div>", unsafe_allow_html=True)
+        trader._reload_state()
+        positions = trader.state.get("positions", {})
+        if positions:
+            pos_rows = []
+            for symbol, pos in positions.items():
+                entry_p = float(pos.get("entry_price", 0))
+                curr_price = float(price_map.get(symbol, entry_p))
+                gross_return = (curr_price - entry_p) / entry_p if entry_p > 0 else 0.0
+                bd = get_tax_engine().calculate_total_cost(pos["invested"], gross_return)
+                try:
+                    raw_time = pos.get("entry_time")
+                    entry_time = datetime.fromisoformat(raw_time) if isinstance(raw_time, str) else datetime.now()
+                    hold_str = str(datetime.now() - entry_time).split(".")[0]
+                except Exception:
+                    hold_str = "Active"
+
+                tp_p = float(pos.get("tp_price", entry_p * (1 + PROFIT_TARGET_PCT)))
+                sl_p = float(pos.get("sl_price", entry_p * (1 - MAX_GROSS_LOSS_PCT)))
+
+                pos_rows.append({
+                    "Company": STOCK_UNIVERSE.get(symbol, symbol),
+                    "Symbol": symbol.replace(".NS", ""),
+                    "Entry Price": f"₹{entry_p:,.2f}",
+                    "Current Price": f"₹{curr_price:,.2f}",
+                    "Qty": f"{pos['qty']:.2f}",
+                    "Invested": f"₹{pos['invested']:,.2f}",
+                    "Target (+1.1%)": f"₹{tp_p:,.2f}",
+                    "Stop Loss (-0.6%)": f"₹{sl_p:,.2f}",
+                    "Gross P&L": f"₹{bd['gross_profit']:+,.2f}",
+                    "Net P&L (Post-Tax)": f"₹{bd['net_profit']:+,.2f}",
+                    "Net ROI": f"{bd['net_return_pct']:+.3f}%",
+                    "Holding Time": hold_str,
+                })
+            st.dataframe(pd.DataFrame(pos_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info(f"🛡️ No active open positions. Cash liquidity is 100% available (₹{summary['available_capital']:,.2f}) — AI is waiting for high-probability setups.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        # 3.3 Transparent AI Ensemble Prediction Matrix
+        last_signals = trader.state.get("last_signals", [])
+        if last_signals:
+            st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+            st.markdown("<div class='card-title'>🧠 AI Multi-Model Prediction Breakdown (CatBoost • XGBoost • LightGBM • Regressors)</div>", unsafe_allow_html=True)
+            sig_rows = []
+            for s in last_signals:
+                p_win = float(s.get("probability", 0.5))
+                exp_ret = float(s.get("expected_return", 0.0))
+                bd = s.get("breakdown", {})
+                cb_p = bd.get("catboost", p_win)
+                xgb_p = bd.get("xgboost", p_win)
+                lgb_p = bd.get("lightgbm", p_win)
+                act = s.get("action", "HOLD")
+                act_badge = "🟢 BUY" if act == "BUY" else "🟡 CANDIDATE" if act == "BUY_CANDIDATE" else "⚪ WATCH"
+
+                sig_rows.append({
+                    "Symbol": s.get("symbol", "").replace(".NS", ""),
+                    "Company": STOCK_UNIVERSE.get(s.get("symbol", ""), s.get("symbol", ""))[:12],
+                    "Price": f"₹{s.get('price', 0):,.2f}",
+                    "Ensemble Win Prob": f"{p_win*100:.1f}%",
+                    "CatBoost": f"{cb_p*100:.1f}%",
+                    "XGBoost": f"{xgb_p*100:.1f}%",
+                    "LightGBM": f"{lgb_p*100:.1f}%",
+                    "Exp Return": f"{exp_ret*100:+.2f}%",
+                    "Target TP": f"₹{s.get('target_tp', 0):,.2f}",
+                    "Stop Loss": f"₹{s.get('stop_loss', 0):,.2f}",
+                    "Action": act_badge,
+                })
+            st.dataframe(pd.DataFrame(sig_rows), use_container_width=True, hide_index=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        # 3.4 The Live Trade Audit & Execution Feed (Tape)
+        st.markdown("<div class='glass-card'>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-bottom: 12px;">
+            <div class="card-title" style="margin: 0;">⚡ Live Real-Time Trade Audit & Execution Feed (BUY / HOLD / SELL / SCAN)</div>
+            <div style="font-size: 0.8rem; color: #94a3b8;">Continuously tracks all live positions being held, every buy/sell execution & scan decision</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        feed = trader.get_live_trade_feed(price_map=price_map)
+        scan_feed = [item for item in feed if item.get("_status_code") == "SCAN"]
+        order_feed = [item for item in feed if item.get("_status_code") in ("BOUGHT", "SOLD")]
+        holding_feed = [item for item in feed if item.get("_status_code") == "HOLDING"]
+
+        feed_tabs = st.tabs([
+            f"📡 Latest AI Scans [{len(scan_feed)}]",
+            f"⚡ All Events (Tape) [{len(feed)}]",
+            f"🟢 Executed Orders [{len(order_feed)}]",
+            f"🛡 Currently Holding [{len(holding_feed)}]",
+        ])
+
+        with feed_tabs[0]:
+            if scan_feed:
+                s_df = pd.DataFrame(scan_feed)
+                show_cols = [
+                    "Timestamp", "Symbol", "Company", "Action / Status", "Current / Exit",
+                    "Net ROI %", "Target (TP)", "Stop Loss (SL)", "AI Conf", "Details / Reason"
+                ]
+                st.dataframe(s_df[[c for c in show_cols if c in s_df.columns]], use_container_width=True, hide_index=True)
+            else:
+                st.info("Run an instant scan or arm Auto-Trader to populate AI candle evaluations.")
+
+        with feed_tabs[1]:
+            if feed:
+                feed_df = pd.DataFrame(feed)
+                show_cols = [
+                    "Timestamp", "Symbol", "Action / Status", "Entry Price", "Current / Exit",
+                    "Qty", "Invested", "Gross P&L", "Net P&L (Post-Tax)", "Net ROI %",
+                    "Hold Time", "Target (TP)", "Stop Loss (SL)", "AI Conf", "Details / Reason"
+                ]
+                st.dataframe(feed_df[[c for c in show_cols if c in feed_df.columns]], use_container_width=True, hide_index=True)
+            else:
+                st.info("No trading events recorded yet.")
+
+        with feed_tabs[2]:
+            if order_feed:
+                o_df = pd.DataFrame(order_feed)
+                show_cols = [
+                    "Timestamp", "Symbol", "Action / Status", "Entry Price", "Current / Exit",
+                    "Qty", "Invested", "Gross P&L", "Net P&L (Post-Tax)", "Net ROI %",
+                    "Fees & Tax", "Hold Time", "AI Conf", "Details / Reason"
+                ]
+                st.dataframe(o_df[[c for c in show_cols if c in o_df.columns]], use_container_width=True, hide_index=True)
+            else:
+                st.info("No completed orders yet.")
+
+        with feed_tabs[3]:
+            if holding_feed:
+                h_df = pd.DataFrame(holding_feed)
+                show_cols = [
+                    "Symbol", "Company", "Action / Status", "Entry Price", "Current / Exit",
+                    "Qty", "Invested", "Gross P&L", "Net P&L (Post-Tax)", "Net ROI %",
+                    "Hold Time", "Target (TP)", "Stop Loss (SL)", "AI Conf", "Details / Reason"
+                ]
+                st.dataframe(h_df[[c for c in show_cols if c in h_df.columns]], use_container_width=True, hide_index=True)
+            else:
+                st.info("No active holding positions. Capital is 100% liquid.")
+
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    render_live_trading_monitor()
 
 
 # ═════════════════════════════════════════════════════════════════════════════

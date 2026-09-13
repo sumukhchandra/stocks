@@ -4,6 +4,7 @@ import joblib
 import os
 import torch
 import sys
+from datetime import datetime
 
 # Add project root to path for imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -306,6 +307,119 @@ class FinalEnsembleEngine:
                 'breakdown': self.predict_universal_breakdown(X_univ) if len(X_univ) == 1 else {}
             }
         }
+
+    def evaluate_batch(self, stock_windows_map):
+        """
+        Ultra-fast vectorized batch evaluation across multiple stocks simultaneously.
+        Evaluates universal ensemble, return regressors, and regime models in vector operations.
+        Returns dict: { symbol: decision_dict }
+        """
+        results = {}
+        if not stock_windows_map:
+            return results
+
+        valid_symbols = []
+        last_rows = []
+
+        for symbol, df_win in stock_windows_map.items():
+            if df_win is None or df_win.empty:
+                continue
+            df_prepared = self._ensure_features(df_win)
+            valid_symbols.append(symbol)
+            last_rows.append(df_prepared.iloc[-1:])
+
+        if not valid_symbols:
+            return results
+
+        batch_states = pd.concat(last_rows, ignore_index=True)
+
+        # 1. Vectorized Universal Prediction
+        X_univ = batch_states.reindex(columns=self.primary_features, fill_value=0)
+        universal_probs = self.predict_universal(X_univ)
+        if isinstance(universal_probs, (float, int)):
+            universal_probs = np.array([universal_probs])
+
+        # 2. Vectorized Expected Return
+        if self.return_models:
+            expected_rets = self.predict_return_ensemble(X_univ)
+            if isinstance(expected_rets, (float, int)):
+                expected_rets = np.array([expected_rets])
+        elif self.regressor:
+            expected_rets = self.regressor.predict(X_univ)
+        else:
+            expected_rets = np.zeros(len(valid_symbols))
+
+        # 3. Vectorized Meta Model Confidence
+        if self.meta_model and len(self.meta_features) > 0:
+            X_meta = batch_states.copy()
+            X_meta['pred_prob'] = universal_probs
+            X_meta = X_meta.reindex(columns=self.meta_features, fill_value=0)
+            confidence_scores = self.meta_model.predict_proba(X_meta)[:, 1]
+        else:
+            confidence_scores = np.full(len(valid_symbols), 0.55)
+
+        # 4. Individual Model Breakdown (CatBoost, XGBoost, LightGBM)
+        model_breakdowns = []
+        for i in range(len(valid_symbols)):
+            bd = {}
+            for name, model in self.universal_models.items():
+                try:
+                    bd[name] = float(model.predict_proba(X_univ.iloc[i:i+1])[:, 1][0])
+                except Exception:
+                    bd[name] = 0.5
+            bd['ensemble'] = float(universal_probs[i])
+            model_breakdowns.append(bd)
+
+        # 5. Assemble decisions per stock
+        for i, symbol in enumerate(valid_symbols):
+            row = batch_states.iloc[i]
+            regime = row.get('regime', 'sideways')
+            univ_p = float(universal_probs[i])
+            exp_ret = float(expected_rets[i])
+            conf = float(confidence_scores[i])
+
+            # Specialist adjustment
+            spec_p = univ_p
+            specialist = self.specialists.get(regime)
+            if specialist:
+                try:
+                    spec_features = getattr(specialist, "feature_names_in_", self.primary_features)
+                    X_spec = pd.DataFrame([row]).reindex(columns=spec_features, fill_value=0)
+                    spec_p = float(specialist.predict_proba(X_spec)[:, 1][0])
+                except Exception:
+                    spec_p = univ_p
+
+            final_p = (univ_p * 0.7) + (spec_p * 0.3)
+            price = float(row.get('close', 0.0))
+            macro_sev = float(row.get('last_macro_severity', 0.0))
+            macro_risk = float(row.get('macro_risk_factor', 0.0))
+            volatility = float(row.get('volatility', 0.02))
+
+            stop_loss = price * 0.994 if final_p > 0.5 else price * 1.006
+            base_size = self.sizer.calculate_size(price, stop_loss, final_p, volatility)
+            risk_mult = self.router.adjust_risk_multiplier(regime, macro_sev, macro_risk)
+            conf_mult = (conf - 0.5) * 2.0 if conf > 0.5 else 0.1
+            recommended_size = base_size * risk_mult * max(0.1, conf_mult)
+
+            results[symbol] = {
+                'timestamp': row.get('timestamp', datetime.now().isoformat()),
+                'symbol': symbol,
+                'price': price,
+                'regime': regime,
+                'final_probability': final_p,
+                'expected_return': exp_ret,
+                'confidence_score': conf,
+                'macro_risk': macro_risk,
+                'recommended_position_size': recommended_size,
+                'signals': {
+                    'universal': univ_p,
+                    'specialist': spec_p,
+                    'lstm': 0.5,
+                    'breakdown': model_breakdowns[i],
+                }
+            }
+
+        return results
 
 if __name__ == "__main__":
     engine = FinalEnsembleEngine()

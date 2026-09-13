@@ -1,6 +1,8 @@
 # Core Web App & UI
 streamlit>=1.30.0
 plotly>=5.18.0
+pywebview>=6.2.0; sys_platform == 'win32'
+qrcode>=8.0.0
 
 # Data Science & Market Data
 pandas>=2.0.0

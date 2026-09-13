@@ -52,6 +52,7 @@ from database.stocks_config import (
 import ml_models.validation
 import ml_models.validation.purged_cv
 from backend.risk.india_tax_engine import IndiaTaxEngine
+from backend.market_data_feed import market_feed
 from data.fetch_stock_data import add_stock_features, _flatten_columns, fetch_nifty_index_features
 from database.db_manager import DatabaseManager
 from database.rules import TradingRulesEngine
@@ -184,47 +185,13 @@ class NSEAutoTrader:
 
     # -- Data Fetching --------------------------------------------------------
 
-    def _fetch_live_data(self, symbols=None):
-        """Fetch recent 5m candle data for all stocks with feature engineering."""
-        symbols = symbols or STOCK_SYMBOLS
-        raw_frames = []
-        for symbol in symbols:
-            try:
-                df = yf.download(
-                    symbol,
-                    period="5d",
-                    interval="5m",
-                    auto_adjust=False,
-                    progress=False,
-                    group_by="column",
-                    threads=False,
-                )
-                if df.empty:
-                    continue
-                df = _flatten_columns(df.reset_index())
-                time_col = (
-                    "datetime" if "datetime" in df.columns
-                    else "date" if "date" in df.columns
-                    else "index"
-                )
-                df = df.rename(columns={time_col: "timestamp", "adj close": "adj_close"})
-                required = ["timestamp", "open", "high", "low", "close", "volume"]
-                if any(c not in df.columns for c in required):
-                    continue
-                df = df[required].copy()
-                df["timestamp"] = pd.to_datetime(df["timestamp"]).dt.tz_localize(None)
-                df["symbol"] = symbol
-                df = df.dropna(subset=["open", "high", "low", "close"])
-                raw_frames.append(df)
-            except Exception:
-                continue
+    def _fetch_live_data(self, symbols=None, force_refresh=False):
+        """Fetch recent 5m candle data for all stocks with high-speed parallel feed and feature engineering."""
+        return market_feed.get_live_feature_dataset(symbols=symbols, force_refresh=force_refresh)
 
-        if not raw_frames:
-            return pd.DataFrame()
-
-        combined = pd.concat(raw_frames, ignore_index=True)
-        nifty_df = fetch_nifty_index_features(period="5d", interval="5m")
-        return add_stock_features(combined, nifty_df=nifty_df)
+    def get_realtime_quotes(self, symbols=None, force_refresh=False):
+        """Fetch sub-second real-time quotes (price, change %, high, low, volume) for all stocks."""
+        return market_feed.get_realtime_quotes(symbols=symbols, force_refresh=force_refresh)
 
     # -- Position Sizing ------------------------------------------------------
 
@@ -262,7 +229,7 @@ class NSEAutoTrader:
     # -- Core Trading Logic ---------------------------------------------------
 
     def run_single_cycle(self, min_confidence=0.48):
-        """Execute one full scan-and-trade cycle with Strategy Mode support."""
+        """Execute one full scan-and-trade cycle with Strategy Mode support and high-speed batch inference."""
         if not self._ensure_engine():
             return {"status": "error", "message": "Models not loaded"}
 
@@ -280,7 +247,21 @@ class NSEAutoTrader:
             if action:
                 results["actions"].append(action)
 
-        # 2. SCAN FOR NEW ENTRIES
+        # 2. Fast batch evaluation for all stocks
+        stock_windows = {}
+        for symbol in STOCK_SYMBOLS:
+            sub = feature_df[feature_df["symbol"] == symbol].sort_values("timestamp")
+            if len(sub) >= 20:
+                stock_windows[symbol] = sub.tail(50)
+
+        batch_decisions = {}
+        if hasattr(self.engine, "evaluate_batch"):
+            try:
+                batch_decisions = self.engine.evaluate_batch(stock_windows)
+            except Exception:
+                batch_decisions = {}
+
+        # 3. SCAN FOR NEW ENTRIES
         mode = self.state.get("strategy_mode", STRATEGY_MODE)
         current_open = len(self.state.get("positions", {}))
 
@@ -290,13 +271,15 @@ class NSEAutoTrader:
                 for symbol in STOCK_SYMBOLS:
                     if symbol in self.state["positions"]:
                         continue
-                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                    dec = batch_decisions.get(symbol)
+                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence, precomputed_decision=dec)
                     results["signals"].append(sig)
             else:
                 # 100% Capital available: Evaluate all stocks and pick the #1 HIGHEST confidence setup!
                 candidates = []
                 for symbol in STOCK_SYMBOLS:
-                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                    dec = batch_decisions.get(symbol)
+                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence, precomputed_decision=dec)
                     results["signals"].append(sig)
                     if sig.get("viable"):
                         candidates.append(sig)
@@ -320,12 +303,13 @@ class NSEAutoTrader:
             for symbol in STOCK_SYMBOLS:
                 if symbol in self.state["positions"]:
                     continue
+                dec = batch_decisions.get(symbol)
                 if len(self.state["positions"]) >= MULTI_SPLIT_POSITIONS or self.state["available_capital"] < 1000:
-                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                    sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence, precomputed_decision=dec)
                     results["signals"].append(sig)
                     continue
 
-                sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence)
+                sig = self._evaluate_signal_only(symbol, feature_df, min_confidence=min_confidence, precomputed_decision=dec)
                 results["signals"].append(sig)
                 if sig.get("viable"):
                     buy_act = self._execute_buy_order(
@@ -470,19 +454,22 @@ class NSEAutoTrader:
             "summary": self.get_portfolio_summary()
         }
 
-    def _evaluate_signal_only(self, symbol, feature_df, min_confidence=0.48):
+    def _evaluate_signal_only(self, symbol, feature_df, min_confidence=0.48, precomputed_decision=None):
         """Evaluate stock features and AI model gates without executing buy."""
         symbol_data = feature_df[feature_df["symbol"] == symbol].sort_values("timestamp")
-        if len(symbol_data) < 50:
+        if len(symbol_data) < 20:
             return {"symbol": symbol, "action": "SKIP", "viable": False, "reason": "insufficient_data"}
 
         window = symbol_data.tail(50)
         current_price = float(window["close"].iloc[-1])
 
-        try:
-            decision = self.engine.evaluate_state(window)
-        except Exception as e:
-            return {"symbol": symbol, "action": "SKIP", "viable": False, "reason": f"model_error: {e}"}
+        if precomputed_decision:
+            decision = precomputed_decision
+        else:
+            try:
+                decision = self.engine.evaluate_state(window)
+            except Exception as e:
+                return {"symbol": symbol, "action": "SKIP", "viable": False, "reason": f"model_error: {e}"}
 
         prob = float(decision["final_probability"])
         expected_return = float(decision.get("expected_return", 0))
@@ -498,6 +485,9 @@ class NSEAutoTrader:
             "regime": decision.get("regime", "unknown"),
             "timestamp": datetime.now().isoformat(),
             "viable": False,
+            "target_tp": round(current_price * (1 + PROFIT_TARGET_PCT), 2),
+            "stop_loss": round(current_price * (1 - MAX_GROSS_LOSS_PCT), 2),
+            "breakdown": decision.get("signals", {}).get("breakdown", {}),
         }
 
         # Gate 1: Minimum confidence

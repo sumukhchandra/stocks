@@ -18,6 +18,7 @@ logs/
 *.tsv
 *.json
 !QA/configs/*.json
+!static/manifest.json
 ml_models/models/saved_models/return_regressor_extratrees.joblib
 
 # IDEs
@@ -27,6 +28,7 @@ ml_models/models/saved_models/return_regressor_extratrees.joblib
 # CatBoost & Scratch
 catboost_info/
 scratch/
+.pytest_cache/
 
 # OS
 .DS_Store

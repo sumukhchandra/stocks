@@ -22,9 +22,11 @@ The project adheres to a strict, modular 7-folder structure:
 ```
 stocks/
 ├── frontend/        # Interactive Streamlit Web App & Dashboards
-│   └── app.py       # Multi-page dashboard (Live Market, Auto-Trader, Backtests, AI Agent)
-├── backend/         # Core Trading Engine & Risk Management
-│   ├── nse_auto_trader.py       # Live & paper-trading execution loop
+│   └── app.py       # Market Terminal, Real-Time Screener, Live Trading (@st.fragment), Backtests
+├── backend/         # Core Trading Engine, High-Speed Feeds & Market Analysis
+│   ├── market_data_feed.py      # FastMarketDataFeed with in-memory TTL caching & batch ingestion
+│   ├── market_analyzer.py       # MarketAnalyzer (breadth sentiment radar, technical screener, breakouts)
+│   ├── nse_auto_trader.py       # Live & paper-trading execution loop with batch evaluation
 │   ├── execution/               # Dynamic regime router & order handlers
 │   └── risk/                    # IndiaTaxEngine (Zerodha costs & 25% STCG tax)
 ├── database/        # Relations, Rules, Logics & SQLite State Persistence
@@ -36,11 +38,12 @@ stocks/
 ├── ml_models/       # Machine Learning & AI Prediction Engine
 │   ├── features/                # Feature engineering (RSI, MACD, Bollinger, Nifty Index)
 │   ├── labels/                  # Triple-barrier labeling & forward return calculation
-│   └── models/                  # Ensemble classifiers (CatBoost, XGBoost, LightGBM, RF) + Regressor
+│   └── models/                  # Ensemble classifiers (CatBoost, XGBoost, LightGBM) + Regressors
+│       └── final_ensemble_engine.py # Vectorized multi-stock batch prediction engine
 ├── simulations/     # Historical & Walk-Forward Simulation Labs
 │   ├── run_batch_simulation.py  # Chronological multi-session simulation (Aug 22 - Sep 7)
 │   ├── stock_simulator.py       # Intraday candle-by-candle simulation engine
-│   └── prediction_lab.py        # Out-of-sample prediction vs reality analysis
+│   └── live_prediction_simulation.py # Live model evaluation & simulated prediction lab
 ├── data/            # Market Data Ingestion & Protected Parquet Caches
 │   ├── fetch_stock_data.py      # Multi-stock & Nifty 50 5-minute candle builder
 │   └── processed/               # Master labeled parquet dataset (60d history)
@@ -51,6 +54,17 @@ stocks/
     ├── strategy_advisor.py      # Quantitative metrics (Sharpe, Win Rate, Thresholds)
     └── trader_agent.py          # Master CLI and autonomous agent runner
 ```
+
+---
+
+## ⚡ High-Speed Real-Time & Advanced Market Analysis Capabilities
+
+1. **FastMarketDataFeed**: Thread-safe in-memory caching with multi-tier TTLs (5s for 1m quotes, 30s for 5m feature candles, 45s for chart history) and concurrent multi-threaded ingestion across the NSE universe with seamless offline fallbacks.
+2. **Market Breadth & Sentiment Radar**: Real-time compute of Market Sentiment Score (0–100), Advance/Decline ratio, sector momentum heatmaps, and breadth diagnostics.
+3. **Institutional Technical Screener Matrix**: Live screening of RSI (14), MACD crossovers, SuperTrend direction, EMA alignment (9/21/50), VWAP distance %, Relative Volume (RVOL), Bollinger Bands %B, and Composite Action Badges.
+4. **Automated Opportunity Scanner**: Instant algorithmic detection of intraday Volume Breakouts and Oversold Mean-Reversion setups.
+5. **Vectorized Batch AI Prediction**: Parallelized multi-stock inference via `final_ensemble_engine.evaluate_batch()`, cutting evaluation time from >20s to <4s.
+6. **Non-Blocking Real-Time Dashboard**: Streamlit 1.58+ `@st.fragment(run_every=5)` streaming eliminates UI freezing and thread blocks.
 
 ---
 

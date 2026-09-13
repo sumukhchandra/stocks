@@ -25,17 +25,23 @@ urlInput.value = backendUrl;
 keyInput.value = apiKey;
 
 // ─── Tab Switching ──────────────────────────────────────────────
+function switchTab(tabId) {
+  if (!tabId) return;
+  activeTab = tabId;
+  document.querySelectorAll(".nav-item").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-tab") === tabId);
+  });
+  document.querySelectorAll(".tab-view").forEach(v => {
+    v.classList.toggle("active", v.id === tabId);
+  });
+  refreshCurrentTab();
+}
+
 document.querySelectorAll(".nav-item").forEach(btn => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".nav-item").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".tab-view").forEach(v => v.classList.remove("active"));
-
-    btn.classList.add("active");
-    activeTab = btn.getAttribute("data-tab");
-    const target = document.getElementById(activeTab);
-    if (target) target.classList.add("active");
-
-    refreshCurrentTab();
+  btn.addEventListener("click", (e) => {
+    e.preventDefault();
+    const tabId = btn.getAttribute("data-tab");
+    switchTab(tabId);
   });
 });
 
@@ -179,14 +185,31 @@ async function loadSignals() {
     }
 
     container.innerHTML = opportunities.map(opp => {
+      const typeLabel = opp.type || opp.setup_type || "BREAKOUT";
+      const isBuy = !typeLabel.toUpperCase().includes("SELL");
+      const badgeClass = isBuy ? "buy" : "sell";
+      const title = opp.title || `${opp.symbol} Algorithmic Signal`;
+      const desc = opp.description || opp.reason || "Quantitative setup triggered.";
+      const price = Number(opp.price || 0).toFixed(1);
+      const target = Number(opp.target || 0).toFixed(1);
+      const sl = Number(opp.stop_loss || 0).toFixed(1);
+
       return `
         <div class="signal-card">
           <div class="card-top-row">
-            <span class="stock-symbol">${opp.symbol}</span>
-            <span class="action-pill buy">${opp.setup_type || 'BREAKOUT'}</span>
+            <div>
+              <span class="stock-symbol">${opp.symbol}</span>
+              <span style="font-size:0.75rem; color:var(--text-muted); margin-left:6px;">${opp.company || ''}</span>
+            </div>
+            <span class="action-pill ${badgeClass}">${typeLabel.replace(/_/g, ' ')}</span>
           </div>
-          <div style="font-size:0.8rem; color:#fff; font-weight:600; margin:4px 0;">${opp.title || ''}</div>
-          <div style="font-size:0.75rem; color:var(--text-muted);">${opp.reason || ''}</div>
+          <div style="font-size:0.85rem; color:#fff; font-weight:700; margin:6px 0 2px 0;">${title}</div>
+          <div style="font-size:0.76rem; color:var(--text-muted); line-height:1.4;">${desc}</div>
+          <div style="display:flex; justify-content:space-between; margin-top:8px; padding-top:6px; border-top:1px solid var(--border-subtle); font-size:0.74rem; font-family:'JetBrains Mono';">
+            <div>Entry: <b style="color:#fff;">₹${price}</b></div>
+            <div>Target: <b style="color:var(--accent-green);">₹${target}</b></div>
+            <div>SL: <b style="color:var(--accent-red);">₹${sl}</b></div>
+          </div>
         </div>
       `;
     }).join("");

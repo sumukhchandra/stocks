@@ -445,6 +445,10 @@ body {
   transition: color 0.15s;
 }
 
+.nav-item * {
+  pointer-events: none;
+}
+
 .nav-icon {
   font-size: 1.25rem;
 }

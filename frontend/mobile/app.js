@@ -1,6 +1,6 @@
 /**
- * NSE Stocks AI — Native Mobile Client Controller
- * Pure Vanilla JavaScript: Fast, reactive, and zero-framework overhead.
+ * NSE Alpha — Scalp Compounding Mobile Terminal
+ * Pure Vanilla JavaScript: Fast, reactive, zero-framework.
  */
 
 // Local Storage Keys
@@ -14,7 +14,7 @@ let backendUrl = localStorage.getItem(STORAGE_KEY_URL) || (
     : (window.location.port === "8000" ? window.location.origin : "http://localhost:8000")
 );
 let apiKey = localStorage.getItem(STORAGE_KEY_KEY) || "nse_secret_alpha_2026";
-let activeTab = "tab-markets";
+let activeTab = "tab-scalp";
 let isOnline = false;
 
 // DOM Elements
@@ -87,25 +87,214 @@ async function checkConnection() {
   }
 }
 
-// ─── Tab 1: Markets Overview ────────────────────────────────────
+// ─── Tab: Scalp Compounding Dashboard ───────────────────────────
+async function loadScalpDashboard() {
+  if (!isOnline) return;
+  try {
+    const data = await apiFetch("/api/v1/scalp/status");
+    if (!data) return;
+    renderScalpDashboard(data);
+  } catch (e) {
+    console.warn("loadScalpDashboard error:", e);
+  }
+}
+
+function renderScalpDashboard(data) {
+  const status = data.status || "idle";
+  const pnl = Number(data.total_net_pnl || 0);
+  const returnPct = Number(data.overall_net_return_pct || 0);
+  const trades = Number(data.total_trades || 0);
+  const winRate = data.win_rate || 0;
+  const pool = Number(data.current_pool || data.starting_capital || 10000);
+  const targetProgress = Number(data.target_progress || 0);
+  const chain = data.chain || [];
+  const activePos = data.active_position;
+  const maxTrades = data.config?.max_trades || 15;
+
+  // Status Badge
+  const statusBadge = document.getElementById("scalpStatusBadge");
+  statusBadge.textContent = status.toUpperCase();
+  statusBadge.className = `scalp-status-badge ${status}`;
+
+  // P&L Display
+  const pnlEl = document.getElementById("scalpPnlBig");
+  const sign = pnl >= 0 ? "+" : "";
+  pnlEl.textContent = `${sign}₹${Math.abs(pnl).toLocaleString('en-IN', {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+  pnlEl.className = `scalp-pnl-big ${pnl > 0 ? 'profit' : pnl < 0 ? 'loss' : 'neutral'}`;
+
+  document.getElementById("scalpPnlSub").textContent =
+    `Net P&L • ${returnPct >= 0 ? '+' : ''}${returnPct.toFixed(4)}% return`;
+
+  // Target Progress
+  document.getElementById("targetProgressPct").textContent = `${Math.min(100, targetProgress).toFixed(0)}%`;
+  document.getElementById("targetProgressBar").style.width = `${Math.min(100, targetProgress)}%`;
+
+  // Stats Grid
+  document.getElementById("scalpTrades").textContent = trades;
+  document.getElementById("scalpWinRate").textContent = trades > 0 ? `${winRate}%` : "—";
+  document.getElementById("scalpPool").textContent = `₹${(pool / 1000).toFixed(1)}K`;
+
+  // Controls
+  const btnStart = document.getElementById("btnStartScalp");
+  const btnStop = document.getElementById("btnStopScalp");
+  if (status === "active" || status === "paused") {
+    btnStart.style.display = "none";
+    btnStop.style.display = "block";
+  } else {
+    btnStart.style.display = "block";
+    btnStop.style.display = "none";
+  }
+
+  // Chain Pipeline Dots
+  renderChainPipeline(chain, activePos, maxTrades);
+
+  // Active Position
+  renderActivePosition(activePos);
+
+  // Trade Chain List
+  renderChainTradeList(chain);
+}
+
+function renderChainPipeline(chain, activePos, maxTrades) {
+  const container = document.getElementById("chainDots");
+  let html = "";
+  const totalSlots = Math.max(10, maxTrades);
+
+  for (let i = 0; i < totalSlots; i++) {
+    if (i > 0) {
+      const connClass = i <= chain.length ? "done" : "";
+      html += `<div class="chain-connector ${connClass}"></div>`;
+    }
+
+    if (i < chain.length) {
+      const trade = chain[i];
+      const isWin = Number(trade.net_profit || 0) > 0;
+      html += `<div class="chain-dot ${isWin ? 'win' : 'loss'}" title="${trade.symbol}: ${trade.net_return_pct}%">${i + 1}</div>`;
+    } else if (i === chain.length && activePos) {
+      html += `<div class="chain-dot active">${i + 1}</div>`;
+    } else {
+      html += `<div class="chain-dot pending">${i + 1}</div>`;
+    }
+  }
+
+  container.innerHTML = html;
+}
+
+function renderActivePosition(pos) {
+  const card = document.getElementById("activePositionCard");
+  if (!pos) {
+    card.style.display = "none";
+    return;
+  }
+  card.style.display = "block";
+
+  document.getElementById("activePosSymbol").textContent = (pos.symbol || "").replace(".NS", "");
+  document.getElementById("activePosCompany").textContent = pos.company || "";
+  document.getElementById("activePosEntry").textContent = `₹${Number(pos.entry_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}`;
+  document.getElementById("activePosTP").textContent = `₹${Number(pos.tp_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}`;
+  document.getElementById("activePosSL").textContent = `₹${Number(pos.sl_price).toLocaleString('en-IN', {minimumFractionDigits: 1})}`;
+
+  const netPnl = Number(pos.unrealized_net_pnl || 0);
+  const unrealPct = Number(pos.unrealized_pct || 0);
+  const pnlEl = document.getElementById("activePosLivePnl");
+  pnlEl.textContent = `${netPnl >= 0 ? '+' : ''}₹${Math.abs(netPnl).toFixed(2)} (${unrealPct >= 0 ? '+' : ''}${unrealPct.toFixed(2)}%)`;
+  pnlEl.className = `pos-live-pnl ${netPnl >= 0 ? 'positive' : 'negative'}`;
+
+  // Hold time bars
+  const barsHeld = Number(pos.bars_held || 0);
+  const maxBars = Number(pos.max_bars || 3);
+  let barsHtml = "";
+  for (let i = 0; i < maxBars; i++) {
+    if (i < barsHeld) {
+      barsHtml += `<div class="pos-bar filled"></div>`;
+    } else if (i === barsHeld) {
+      barsHtml += `<div class="pos-bar active-bar"></div>`;
+    } else {
+      barsHtml += `<div class="pos-bar"></div>`;
+    }
+  }
+  document.getElementById("activePosBars").innerHTML = barsHtml;
+}
+
+function renderChainTradeList(chain) {
+  const container = document.getElementById("chainTradeList");
+  if (!chain || chain.length === 0) {
+    container.innerHTML = '<div class="empty-state">No trades yet. Start a session to begin compounding.</div>';
+    return;
+  }
+
+  // Show most recent first
+  const reversed = [...chain].reverse();
+  container.innerHTML = reversed.map(trade => {
+    const isWin = Number(trade.net_profit || 0) > 0;
+    const sym = (trade.symbol || "").replace(".NS", "");
+    const netPnl = Number(trade.net_profit || 0);
+    const netPct = Number(trade.net_return_pct || 0);
+    const reason = (trade.reason || "").replace(/_/g, " ");
+
+    return `
+      <div class="chain-trade-item">
+        <div class="chain-trade-num ${isWin ? 'win' : 'loss'}">${trade.trade_num || '?'}</div>
+        <div class="chain-trade-info">
+          <div class="chain-trade-symbol">${sym}</div>
+          <div class="chain-trade-detail">${reason} • ${trade.hold_duration || '—'} • Pool: ₹${Number(trade.pool_after || 0).toLocaleString('en-IN')}</div>
+        </div>
+        <div class="chain-trade-pnl ${isWin ? 'positive' : 'negative'}">
+          ${netPnl >= 0 ? '+' : ''}₹${Math.abs(netPnl).toFixed(2)}
+          <div style="font-size:0.65rem;color:var(--text-muted);">${netPct >= 0 ? '+' : ''}${netPct.toFixed(3)}%</div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// ─── Scalp Session Controls ─────────────────────────────────────
+document.getElementById("btnStartScalp").addEventListener("click", async () => {
+  const btn = document.getElementById("btnStartScalp");
+  try {
+    btn.textContent = "⏳ Starting session...";
+    btn.disabled = true;
+    await apiFetch("/api/v1/scalp/start", { method: "POST" });
+    loadScalpDashboard();
+  } catch (e) {
+    alert(`Failed to start: ${e.message}`);
+  } finally {
+    btn.textContent = "🚀 Start Scalp Session";
+    btn.disabled = false;
+  }
+});
+
+document.getElementById("btnStopScalp").addEventListener("click", async () => {
+  const btn = document.getElementById("btnStopScalp");
+  try {
+    btn.textContent = "⏳ Stopping...";
+    btn.disabled = true;
+    await apiFetch("/api/v1/scalp/stop?reason=manual_stop", { method: "POST" });
+    loadScalpDashboard();
+  } catch (e) {
+    alert(`Failed to stop: ${e.message}`);
+  } finally {
+    btn.textContent = "⏹ Stop Session";
+    btn.disabled = false;
+  }
+});
+
+// ─── Tab: Markets Overview ──────────────────────────────────────
 async function loadMarkets() {
   if (!isOnline) return;
   try {
     const data = await apiFetch("/api/v1/market/overview");
     if (!data) return;
 
-    // Sentiment Score
     const score = Number(data.sentiment_score || 50).toFixed(1);
     document.getElementById("sentimentScore").textContent = score;
     document.getElementById("sentimentLabel").textContent = data.sentiment || "NEUTRAL";
     document.getElementById("sentimentBar").style.width = `${Math.min(100, Math.max(0, score))}%`;
 
-    // Breadth counts
     document.getElementById("advCount").textContent = data.advance_count || 0;
     document.getElementById("decCount").textContent = data.decline_count || 0;
     document.getElementById("advDecRatio").textContent = (data.adv_dec_ratio || 1.0).toFixed(2);
 
-    // Sector Grid
     const sectorGrid = document.getElementById("sectorGrid");
     const sectors = data.sector_performance || {};
     const keys = Object.keys(sectors);
@@ -133,7 +322,7 @@ async function loadMarkets() {
   }
 }
 
-// ─── Tab 2: Screener ────────────────────────────────────────────
+// ─── Tab: Screener ──────────────────────────────────────────────
 async function loadScreener() {
   if (!isOnline) return;
   try {
@@ -178,52 +367,7 @@ async function loadScreener() {
   }
 }
 
-// ─── Tab 3: Signals ─────────────────────────────────────────────
-async function loadSignals() {
-  if (!isOnline) return;
-  try {
-    const opportunities = await apiFetch("/api/v1/market/opportunities");
-    const container = document.getElementById("signalsList");
-    if (!Array.isArray(opportunities) || opportunities.length === 0) {
-      container.innerHTML = '<div class="empty-state">No active breakout setups currently detected.</div>';
-      return;
-    }
-
-    container.innerHTML = opportunities.map(opp => {
-      const typeLabel = opp.type || opp.setup_type || "BREAKOUT";
-      const isBuy = !typeLabel.toUpperCase().includes("SELL");
-      const badgeClass = isBuy ? "buy" : "sell";
-      const title = opp.title || `${opp.symbol} Algorithmic Signal`;
-      const desc = opp.description || opp.reason || "Quantitative setup triggered.";
-      const price = Number(opp.price || 0).toFixed(1);
-      const target = Number(opp.target || 0).toFixed(1);
-      const sl = Number(opp.stop_loss || 0).toFixed(1);
-
-      return `
-        <div class="signal-card">
-          <div class="card-top-row">
-            <div>
-              <span class="stock-symbol">${opp.symbol}</span>
-              <span style="font-size:0.75rem; color:var(--text-muted); margin-left:6px;">${opp.company || ''}</span>
-            </div>
-            <span class="action-pill ${badgeClass}">${typeLabel.replace(/_/g, ' ')}</span>
-          </div>
-          <div style="font-size:0.85rem; color:#fff; font-weight:700; margin:6px 0 2px 0;">${title}</div>
-          <div style="font-size:0.76rem; color:var(--text-muted); line-height:1.4;">${desc}</div>
-          <div style="display:flex; justify-content:space-between; margin-top:8px; padding-top:6px; border-top:1px solid var(--border-subtle); font-size:0.74rem; font-family:'JetBrains Mono';">
-            <div>Entry: <b style="color:#fff;">₹${price}</b></div>
-            <div>Target: <b style="color:var(--accent-green);">₹${target}</b></div>
-            <div>SL: <b style="color:var(--accent-red);">₹${sl}</b></div>
-          </div>
-        </div>
-      `;
-    }).join("");
-  } catch (e) {
-    console.warn("loadSignals error:", e);
-  }
-}
-
-// ─── Tab 4: Portfolio ───────────────────────────────────────────
+// ─── Tab: Portfolio ─────────────────────────────────────────────
 async function loadPortfolio() {
   if (!isOnline) return;
   try {
@@ -303,9 +447,9 @@ document.getElementById("btnTestConnection").addEventListener("click", checkConn
 
 // ─── Auto Refresh Dispatcher ────────────────────────────────────
 function refreshCurrentTab() {
-  if (activeTab === "tab-markets") loadMarkets();
+  if (activeTab === "tab-scalp") loadScalpDashboard();
+  else if (activeTab === "tab-markets") loadMarkets();
   else if (activeTab === "tab-screener") loadScreener();
-  else if (activeTab === "tab-signals") loadSignals();
   else if (activeTab === "tab-portfolio") loadPortfolio();
 }
 
@@ -314,10 +458,10 @@ function refreshCurrentTab() {
   await checkConnection();
   refreshCurrentTab();
 
-  // 5-second polling loop
+  // 3-second polling for scalp dashboard, 5-second for others
   setInterval(() => {
     if (isOnline && activeTab !== "tab-settings") {
       refreshCurrentTab();
     }
-  }, 5000);
+  }, activeTab === "tab-scalp" ? 3000 : 5000);
 })();

@@ -473,3 +473,395 @@ body {
   color: var(--text-muted);
   font-size: 0.82rem;
 }
+
+/* ─── Scalp Dashboard ──────────────────────────────────── */
+.scalp-hero {
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.06) 0%, rgba(0, 145, 234, 0.08) 100%);
+  border: 1px solid rgba(0, 229, 255, 0.15);
+  border-radius: 16px;
+  padding: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+  position: relative;
+  overflow: hidden;
+}
+
+.scalp-hero::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -50%;
+  width: 200%;
+  height: 200%;
+  background: radial-gradient(circle at 30% 70%, rgba(0, 229, 255, 0.04) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+.scalp-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.scalp-status-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.scalp-status-badge.active {
+  background: rgba(0, 240, 152, 0.15);
+  color: var(--accent-green);
+  border: 1px solid rgba(0, 240, 152, 0.35);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.scalp-status-badge.idle {
+  background: rgba(148, 163, 184, 0.12);
+  color: var(--text-muted);
+  border: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.scalp-status-badge.paused {
+  background: rgba(255, 183, 3, 0.15);
+  color: var(--accent-gold);
+  border: 1px solid rgba(255, 183, 3, 0.35);
+}
+
+.scalp-status-badge.halted {
+  background: rgba(255, 51, 102, 0.15);
+  color: var(--accent-red);
+  border: 1px solid rgba(255, 51, 102, 0.35);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(0, 240, 152, 0.2); }
+  50% { box-shadow: 0 0 14px rgba(0, 240, 152, 0.5); }
+}
+
+.scalp-pnl-big {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 2.4rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  margin: 6px 0;
+  transition: color 0.3s;
+}
+
+.scalp-pnl-big.profit { color: var(--accent-green); }
+.scalp-pnl-big.loss { color: var(--accent-red); }
+.scalp-pnl-big.neutral { color: var(--text-muted); }
+
+.scalp-pnl-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.scalp-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.scalp-stat {
+  text-align: center;
+}
+
+.scalp-stat-value {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.scalp-stat-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ─── Compound Chain Pipeline ──────────────────────────── */
+.chain-pipeline {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 12px;
+}
+
+.chain-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.chain-dots {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.chain-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.6rem;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  flex-shrink: 0;
+  transition: all 0.3s;
+}
+
+.chain-dot.win {
+  background: rgba(0, 240, 152, 0.2);
+  color: var(--accent-green);
+  border: 2px solid var(--accent-green);
+  box-shadow: 0 0 8px rgba(0, 240, 152, 0.3);
+}
+
+.chain-dot.loss {
+  background: rgba(255, 51, 102, 0.2);
+  color: var(--accent-red);
+  border: 2px solid var(--accent-red);
+}
+
+.chain-dot.active {
+  background: rgba(0, 229, 255, 0.2);
+  color: var(--accent-cyan);
+  border: 2px solid var(--accent-cyan);
+  animation: pulse-glow-cyan 1.5s ease-in-out infinite;
+}
+
+.chain-dot.pending {
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.2);
+  border: 2px dashed rgba(255, 255, 255, 0.1);
+}
+
+@keyframes pulse-glow-cyan {
+  0%, 100% { box-shadow: 0 0 6px rgba(0, 229, 255, 0.2); }
+  50% { box-shadow: 0 0 16px rgba(0, 229, 255, 0.6); }
+}
+
+.chain-connector {
+  width: 12px;
+  height: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.chain-connector.done {
+  background: linear-gradient(90deg, var(--accent-green), var(--accent-cyan));
+}
+
+/* ─── Active Position Card ─────────────────────────────── */
+.active-pos-card {
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.05) 0%, rgba(0, 91, 234, 0.06) 100%);
+  border: 1px solid rgba(0, 229, 255, 0.2);
+  border-radius: 12px;
+  padding: 14px;
+  margin-top: 12px;
+}
+
+.pos-symbol-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pos-live-pnl {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 1.4rem;
+  font-weight: 800;
+  margin: 8px 0;
+}
+
+.pos-bars-row {
+  display: flex;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.pos-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.pos-bar.filled {
+  background: var(--accent-cyan);
+}
+
+.pos-bar.active-bar {
+  background: var(--accent-cyan);
+  animation: bar-pulse 1s ease-in-out infinite;
+}
+
+@keyframes bar-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.pos-levels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  font-family: 'JetBrains Mono', monospace;
+  margin-top: 6px;
+}
+
+/* ─── Scalp Session Controls ───────────────────────────── */
+.scalp-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.btn-start-scalp {
+  flex: 1;
+  padding: 14px;
+  border: none;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  background: linear-gradient(135deg, #00f098 0%, #00c97a 100%);
+  color: #000;
+  transition: all 0.2s;
+}
+
+.btn-stop-scalp {
+  flex: 1;
+  padding: 14px;
+  border: none;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 0.9rem;
+  cursor: pointer;
+  background: linear-gradient(135deg, #ff3366 0%, #cc2952 100%);
+  color: #fff;
+  transition: all 0.2s;
+}
+
+.btn-start-scalp:active, .btn-stop-scalp:active {
+  transform: scale(0.97);
+  opacity: 0.85;
+}
+
+/* ─── Target Progress Bar ──────────────────────────────── */
+.target-progress {
+  margin-top: 12px;
+}
+
+.target-label-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.target-bar-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.target-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-cyan) 0%, var(--accent-green) 100%);
+  transition: width 0.6s ease;
+  box-shadow: 0 0 10px rgba(0, 240, 152, 0.3);
+}
+
+/* ─── Trade Chain History List ─────────────────────────── */
+.chain-trade-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.chain-trade-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  font-size: 0.78rem;
+}
+
+.chain-trade-num {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 0.7rem;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.chain-trade-num.win { background: rgba(0, 240, 152, 0.15); color: var(--accent-green); }
+.chain-trade-num.loss { background: rgba(255, 51, 102, 0.15); color: var(--accent-red); }
+
+.chain-trade-info {
+  flex: 1;
+  margin-left: 8px;
+}
+
+.chain-trade-symbol {
+  font-weight: 700;
+  color: #fff;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.chain-trade-detail {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.chain-trade-pnl {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 700;
+  font-size: 0.82rem;
+  text-align: right;
+}
+
+.settings-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 6px;
+}
+
+.settings-desc {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-bottom: 12px;
+}
+

@@ -1,25 +1,48 @@
 """Shared stock universe and trading configuration for the NSE trading system."""
 
-# --- Stock Universe (10 high-liquidity NSE stocks) ---------------------------
+# --- Stock Universe (30 high-liquidity NSE stocks for scalping) ---------------
 STOCK_UNIVERSE = {
-    # Original 5
-    "RELIANCE.NS": "Reliance Industries",
+    # --- Tier 1: Banking & Finance (Highest intraday liquidity) ---
     "HDFCBANK.NS": "HDFC Bank",
-    "BHARTIARTL.NS": "Bharti Airtel",
     "ICICIBANK.NS": "ICICI Bank",
-    "TATACAP.NS": "Tata Capital",
-    # Added 5 (high-liquidity Nifty 50)
-    "INFY.NS": "Infosys",
-    "TCS.NS": "TCS",
     "SBIN.NS": "State Bank of India",
     "AXISBANK.NS": "Axis Bank",
+    "KOTAKBANK.NS": "Kotak Mahindra Bank",
     "BAJFINANCE.NS": "Bajaj Finance",
+    "BAJAJFINSV.NS": "Bajaj Finserv",
+    "INDUSINDBK.NS": "IndusInd Bank",
+    # --- Tier 2: IT & Technology ---
+    "INFY.NS": "Infosys",
+    "TCS.NS": "TCS",
+    "HCLTECH.NS": "HCL Technologies",
+    "WIPRO.NS": "Wipro",
+    "TECHM.NS": "Tech Mahindra",
+    # --- Tier 3: Energy & Industrials ---
+    "RELIANCE.NS": "Reliance Industries",
+    "BHARTIARTL.NS": "Bharti Airtel",
+    "LT.NS": "Larsen & Toubro",
+    "TATASTEEL.NS": "Tata Steel",
+    "ADANIENT.NS": "Adani Enterprises",
+    "ADANIPORTS.NS": "Adani Ports",
+    "POWERGRID.NS": "Power Grid Corp",
+    "NTPC.NS": "NTPC",
+    # --- Tier 4: FMCG & Pharma ---
+    "HINDUNILVR.NS": "Hindustan Unilever",
+    "ITC.NS": "ITC",
+    "SUNPHARMA.NS": "Sun Pharma",
+    "DRREDDY.NS": "Dr. Reddy's Labs",
+    # --- Tier 5: Auto & Metals ---
+    "MARUTI.NS": "Maruti Suzuki",
+    "M&M.NS": "Mahindra & Mahindra",
+    "JSWSTEEL.NS": "JSW Steel",
+    "HINDALCO.NS": "Hindalco Industries",
+    "COALINDIA.NS": "Coal India",
 }
 
 STOCK_SYMBOLS = list(STOCK_UNIVERSE.keys())
 
 # --- Strategy Modes & Compounding Configuration ------------------------------
-STRATEGY_MODE = "SINGLE_BULLET"      # Default mode: "SINGLE_BULLET" (100% in #1 setup) or "MULTI_SPLIT" (split into N baskets)
+STRATEGY_MODE = "SINGLE_BULLET"      # "SINGLE_BULLET" | "MULTI_SPLIT" | "SCALP_COMPOUND"
 SINGLE_BULLET_ALLOCATION_PCT = 0.98  # 98% of available capital into the single highest-conviction trade
 MULTI_SPLIT_POSITIONS = 3            # Split capital into 3 concurrent trades in MULTI_SPLIT mode
 
@@ -39,6 +62,21 @@ TARGET_PROFIT_PER_TRADE = 80.0       # Target Rs.80-100 net profit per trade in 
 TARGET_DAILY_PROFIT = 500.0          # Target Rs.500 daily net profit (10-15 trades)
 INTRADAY_LEVERAGE = 5.0              # 5x Margin Intraday Square-off (MIS on Zerodha)
 MIN_POSITION_SIZE_INR = 3000.0       # Minimum size per trade in split mode
+
+# --- Scalp Compounding Mode Configuration ------------------------------------
+SCALP_MIN_RETURN_PCT = 0.010         # 1.0% gross target per trade (guarantees >0.5% net after all costs)
+SCALP_NET_PROFIT_TARGET = 0.005      # 0.5% net overall daily target after all taxes
+SCALP_MIN_PROBABILITY = 0.62         # Minimum ML probability to enter a scalp trade
+SCALP_MIN_TRADES_PER_SESSION = 10    # Find minimum 10 compound trades per day
+SCALP_MAX_TRADES_PER_SESSION = 15    # Cap at 15 trades to prevent overtrading
+SCALP_MAX_HOLD_BARS = 3              # Max 3 × 5-min = 15 mins per scalp trade
+SCALP_TP_PCT = 0.012                 # 1.2% take-profit for scalp trades
+SCALP_SL_PCT = 0.004                 # 0.4% stop-loss for scalp (tight, 3:1 R:R ratio)
+SCALP_CHAIN_STOP_ON_LOSS = True      # Pause compounding chain for 10 min after a stop-loss hit
+SCALP_CHAIN_PAUSE_MINUTES = 10       # Cooldown after a loss before resuming chain
+SCALP_DRAWDOWN_HALT_PCT = 0.02       # Halt session if pool drops 2% below starting capital
+COMPOUND_REINVEST_PCT = 1.0          # 100% of capital+profit reinvested into next trade
+SCALP_SCAN_INTERVAL_SECONDS = 30     # Faster 30s scanning for scalp mode
 
 # --- Position Sizing Dictionary (Legacy / Multi-Basket reference) ------------
 POSITION_SIZING = {

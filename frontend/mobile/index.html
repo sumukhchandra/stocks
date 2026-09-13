@@ -3,14 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>NSE Stocks AI — Mobile Terminal</title>
+  <title>NSE Alpha — Scalp Compounding Terminal</title>
   
   <!-- Apple Native PWA Capabilities -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="NSE Stocks" />
+  <meta name="apple-mobile-web-app-title" content="NSE Alpha" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="theme-color" content="#080b11" />
+  <meta name="description" content="AI-powered 5-minute scalp compounding engine for NSE stocks. Real-time ML predictions, automated trading, and compound chain tracking." />
   
   <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
   <link rel="icon" type="image/png" href="./apple-touch-icon.png" />
@@ -37,8 +38,88 @@
   <!-- Main Scrollable Content Area -->
   <main class="content-container">
     
-    <!-- Tab 1: Markets Overview -->
-    <section id="tab-markets" class="tab-view active">
+    <!-- Tab 1: Scalp Compounding Dashboard (PRIMARY) -->
+    <section id="tab-scalp" class="tab-view active">
+      <!-- Session Hero Card -->
+      <div class="scalp-hero">
+        <div class="scalp-status-row">
+          <span class="hero-label">SCALP COMPOUND SESSION</span>
+          <span id="scalpStatusBadge" class="scalp-status-badge idle">IDLE</span>
+        </div>
+        <div id="scalpPnlBig" class="scalp-pnl-big neutral">₹0.00</div>
+        <div id="scalpPnlSub" class="scalp-pnl-sub">Net P&L • 0.00% return</div>
+
+        <!-- Target Progress Bar -->
+        <div class="target-progress">
+          <div class="target-label-row">
+            <span>Progress to 0.5% target</span>
+            <span id="targetProgressPct">0%</span>
+          </div>
+          <div class="target-bar-track">
+            <div id="targetProgressBar" class="target-bar-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <!-- Stats Grid -->
+        <div class="scalp-stats-grid">
+          <div class="scalp-stat">
+            <div id="scalpTrades" class="scalp-stat-value">0</div>
+            <div class="scalp-stat-label">Trades</div>
+          </div>
+          <div class="scalp-stat">
+            <div id="scalpWinRate" class="scalp-stat-value">—</div>
+            <div class="scalp-stat-label">Win Rate</div>
+          </div>
+          <div class="scalp-stat">
+            <div id="scalpPool" class="scalp-stat-value">₹10K</div>
+            <div class="scalp-stat-label">Pool</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Compound Chain Pipeline -->
+      <div class="chain-pipeline">
+        <div class="chain-title">Compound Chain Progress</div>
+        <div id="chainDots" class="chain-dots">
+          <!-- Rendered dynamically: dots + connectors -->
+        </div>
+      </div>
+
+      <!-- Active Position (shown only when holding) -->
+      <div id="activePositionCard" class="active-pos-card" style="display:none;">
+        <div class="pos-symbol-row">
+          <div>
+            <span id="activePosSymbol" class="stock-symbol">—</span>
+            <span id="activePosCompany" style="font-size:0.72rem; color:var(--text-muted); margin-left:6px;"></span>
+          </div>
+          <span class="action-pill buy">HOLDING</span>
+        </div>
+        <div id="activePosLivePnl" class="pos-live-pnl positive">₹0.00</div>
+        <div id="activePosBars" class="pos-bars-row">
+          <!-- 3 bars for max hold time -->
+        </div>
+        <div class="pos-levels">
+          <div>SL: <b id="activePosSL" style="color:var(--accent-red);">—</b></div>
+          <div>Entry: <b id="activePosEntry" style="color:#fff;">—</b></div>
+          <div>TP: <b id="activePosTP" style="color:var(--accent-green);">—</b></div>
+        </div>
+      </div>
+
+      <!-- Session Controls -->
+      <div class="scalp-controls">
+        <button id="btnStartScalp" class="btn-start-scalp">🚀 Start Scalp Session</button>
+        <button id="btnStopScalp" class="btn-stop-scalp" style="display:none;">⏹ Stop Session</button>
+      </div>
+
+      <!-- Trade Chain History -->
+      <div class="section-title" style="margin-top:18px;">Trade Chain</div>
+      <div id="chainTradeList" class="chain-trade-list">
+        <div class="empty-state">No trades yet. Start a session to begin compounding.</div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Markets Overview -->
+    <section id="tab-markets" class="tab-view">
       <div class="market-hero-card">
         <div class="hero-header">
           <span class="hero-label">MARKET SENTIMENT</span>
@@ -60,26 +141,15 @@
 
       <div class="section-title">Sector Rotation</div>
       <div id="sectorGrid" class="sector-grid">
-        <!-- Rendered dynamically -->
         <div class="loading-state">Loading sector dynamics...</div>
       </div>
     </section>
 
-    <!-- Tab 2: Screener Matrix -->
+    <!-- Tab 3: Screener Matrix -->
     <section id="tab-screener" class="tab-view">
       <div class="section-title">Technical Screener Matrix</div>
       <div id="screenerList" class="screener-list">
-        <!-- Rendered dynamically -->
         <div class="loading-state">Loading technical indicators...</div>
-      </div>
-    </section>
-
-    <!-- Tab 3: Signals & Opportunities -->
-    <section id="tab-signals" class="tab-view">
-      <div class="section-title">Algorithmic Intraday Setups</div>
-      <div id="signalsList" class="signals-list">
-        <!-- Rendered dynamically -->
-        <div class="loading-state">Scanning breakout opportunities...</div>
       </div>
     </section>
 
@@ -140,17 +210,17 @@
 
   <!-- Bottom Navigation Bar -->
   <nav class="bottom-nav">
-    <button id="nav-btn-markets" class="nav-item active" data-tab="tab-markets">
+    <button id="nav-btn-scalp" class="nav-item active" data-tab="tab-scalp">
+      <span class="nav-icon">🎯</span>
+      <span class="nav-label">Scalp</span>
+    </button>
+    <button id="nav-btn-markets" class="nav-item" data-tab="tab-markets">
       <span class="nav-icon">📈</span>
       <span class="nav-label">Markets</span>
     </button>
     <button id="nav-btn-screener" class="nav-item" data-tab="tab-screener">
       <span class="nav-icon">🔍</span>
       <span class="nav-label">Screener</span>
-    </button>
-    <button id="nav-btn-signals" class="nav-item" data-tab="tab-signals">
-      <span class="nav-icon">⚡</span>
-      <span class="nav-label">Signals</span>
     </button>
     <button id="nav-btn-portfolio" class="nav-item" data-tab="tab-portfolio">
       <span class="nav-icon">💼</span>

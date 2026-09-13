@@ -169,6 +169,82 @@ class IndiaTaxEngine:
         target_net_pct = min_net_bps / 10000
         return self.get_required_gross_for_net(target_net_pct=target_net_pct)
 
+    def calculate_scalp_viability(self, capital, target_net_pct=0.005):
+        """
+        Pre-compute the minimum gross return needed for a scalp trade to
+        guarantee target_net_pct (default 0.5%) net return after ALL costs.
+        Also returns the cost breakdown at that gross return.
+        """
+        min_gross = self.get_required_gross_for_net(capital=capital, target_net_pct=target_net_pct)
+        breakdown = self.calculate_total_cost(capital, min_gross)
+        return {
+            "capital": capital,
+            "target_net_pct": target_net_pct * 100,
+            "required_gross_pct": min_gross * 100,
+            "cost_at_threshold": breakdown["total_cost"],
+            "tax_at_threshold": breakdown["tax"],
+            "net_profit_at_threshold": breakdown["net_profit"],
+            "net_return_at_threshold": breakdown["net_return_pct"],
+            "viable": breakdown["net_return_pct"] >= target_net_pct * 100,
+        }
+
+    def calculate_chain_tax(self, starting_capital, gross_returns_list):
+        """
+        Compute cumulative taxes and P&L across a chain of N sequential
+        compounding trades where capital + net_profit rolls into the next trade.
+
+        Parameters
+        ----------
+        starting_capital : float
+            Initial capital at the start of the chain.
+        gross_returns_list : list[float]
+            List of gross returns (decimals) for each trade in the chain.
+
+        Returns
+        -------
+        dict with per-trade breakdowns, cumulative P&L, and final capital.
+        """
+        current_capital = starting_capital
+        trades = []
+        total_costs = 0.0
+        total_taxes = 0.0
+        total_gross_profit = 0.0
+        total_net_profit = 0.0
+
+        for i, gross_ret in enumerate(gross_returns_list):
+            bd = self.calculate_total_cost(current_capital, gross_ret)
+            trades.append({
+                "trade_num": i + 1,
+                "capital_in": round(current_capital, 2),
+                "gross_return_pct": round(gross_ret * 100, 4),
+                "gross_profit": bd["gross_profit"],
+                "costs": bd["total_cost"],
+                "tax": bd["tax"],
+                "net_profit": bd["net_profit"],
+                "net_return_pct": bd["net_return_pct"],
+                "capital_out": round(current_capital + bd["net_profit"], 2),
+            })
+            total_costs += bd["total_cost"]
+            total_taxes += bd["tax"]
+            total_gross_profit += bd["gross_profit"]
+            total_net_profit += bd["net_profit"]
+            current_capital += bd["net_profit"]
+
+        overall_net_return = ((current_capital - starting_capital) / starting_capital) * 100
+
+        return {
+            "starting_capital": starting_capital,
+            "final_capital": round(current_capital, 2),
+            "num_trades": len(gross_returns_list),
+            "total_gross_profit": round(total_gross_profit, 2),
+            "total_costs": round(total_costs, 2),
+            "total_taxes": round(total_taxes, 2),
+            "total_net_profit": round(total_net_profit, 2),
+            "overall_net_return_pct": round(overall_net_return, 4),
+            "meets_target": overall_net_return >= 0.5,
+            "trades": trades,
+        }
+
 
 if __name__ == "__main__":
     engine = IndiaTaxEngine()
@@ -186,3 +262,19 @@ if __name__ == "__main__":
     # Example: Is a 0.8% predicted move viable?
     viable, details = engine.is_trade_viable(100000, 0.008)
     print(f"\nIs 0.8% gross viable? {viable} (net: {details['net_return_pct']:.4f}%)")
+
+    # Scalp viability check
+    print("\n--- Scalp Viability (Rs.10,000 capital) ---")
+    sv = engine.calculate_scalp_viability(10000, target_net_pct=0.005)
+    for k, v in sv.items():
+        print(f"  {k}: {v}")
+
+    # Chain tax: 10 trades at 1.0% gross each, starting with Rs.10,000
+    print("\n--- Compound Chain: 10 trades @ 1.0% gross ---")
+    chain = engine.calculate_chain_tax(10000, [0.01] * 10)
+    print(f"  Starting: Rs.{chain['starting_capital']:,.2f}")
+    print(f"  Final:    Rs.{chain['final_capital']:,.2f}")
+    print(f"  Net P&L:  Rs.{chain['total_net_profit']:+,.2f}")
+    print(f"  Overall:  {chain['overall_net_return_pct']:+.4f}%")
+    print(f"  Target met: {chain['meets_target']}")
+

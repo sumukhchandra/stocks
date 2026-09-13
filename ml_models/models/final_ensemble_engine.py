@@ -358,36 +358,44 @@ class FinalEnsembleEngine:
         else:
             confidence_scores = np.full(len(valid_symbols), 0.55)
 
-        # 4. Individual Model Breakdown (CatBoost, XGBoost, LightGBM)
+        # 4. Vectorized Individual Model Breakdown (CatBoost, XGBoost, LightGBM)
+        model_prob_vectors = {}
+        for name, model in self.universal_models.items():
+            try:
+                model_prob_vectors[name] = model.predict_proba(X_univ)[:, 1]
+            except Exception:
+                model_prob_vectors[name] = np.full(len(valid_symbols), 0.5)
+
         model_breakdowns = []
         for i in range(len(valid_symbols)):
-            bd = {}
-            for name, model in self.universal_models.items():
-                try:
-                    bd[name] = float(model.predict_proba(X_univ.iloc[i:i+1])[:, 1][0])
-                except Exception:
-                    bd[name] = 0.5
+            bd = {name: float(model_prob_vectors[name][i]) for name in self.universal_models}
             bd['ensemble'] = float(universal_probs[i])
             model_breakdowns.append(bd)
 
-        # 5. Assemble decisions per stock
+        # 5. Vectorized Regime Specialist Predictions Grouped by Regime
+        spec_probs = np.array(universal_probs, copy=True)
+        regimes = batch_states['regime'].fillna('sideways').values if 'regime' in batch_states.columns else np.array(['sideways'] * len(valid_symbols))
+
+        for reg_name, specialist in self.specialists.items():
+            mask = (regimes == reg_name)
+            if not np.any(mask):
+                continue
+            try:
+                spec_features = getattr(specialist, "feature_names_in_", self.primary_features)
+                X_spec = batch_states.loc[mask].reindex(columns=spec_features, fill_value=0)
+                preds = specialist.predict_proba(X_spec)[:, 1]
+                spec_probs[mask] = preds
+            except Exception:
+                pass
+
+        # 6. Assemble decisions per stock (vectorized calculations)
         for i, symbol in enumerate(valid_symbols):
             row = batch_states.iloc[i]
-            regime = row.get('regime', 'sideways')
+            regime = str(regimes[i])
             univ_p = float(universal_probs[i])
+            spec_p = float(spec_probs[i])
             exp_ret = float(expected_rets[i])
             conf = float(confidence_scores[i])
-
-            # Specialist adjustment
-            spec_p = univ_p
-            specialist = self.specialists.get(regime)
-            if specialist:
-                try:
-                    spec_features = getattr(specialist, "feature_names_in_", self.primary_features)
-                    X_spec = pd.DataFrame([row]).reindex(columns=spec_features, fill_value=0)
-                    spec_p = float(specialist.predict_proba(X_spec)[:, 1][0])
-                except Exception:
-                    spec_p = univ_p
 
             final_p = (univ_p * 0.7) + (spec_p * 0.3)
             price = float(row.get('close', 0.0))
@@ -421,6 +429,62 @@ class FinalEnsembleEngine:
 
         return results
 
+    def rank_scalp_candidates(self, stock_windows_map, min_return=0.008, min_prob=0.60, top_n=10):
+        """
+        Scalp-optimized stock ranker:
+        1. Runs evaluate_batch() for all stocks
+        2. Filters to stocks with expected_return >= min_return AND probability >= min_prob
+        3. Ranks by composite score: expected_return × probability × confidence
+        4. Returns top_n candidates sorted best-first
+
+        Parameters
+        ----------
+        stock_windows_map : dict
+            { symbol: DataFrame } with recent 5m candle data per stock
+        min_return : float
+            Minimum predicted 5-minute return (decimal, e.g. 0.008 = 0.8%)
+        min_prob : float
+            Minimum ML probability threshold
+        top_n : int
+            Number of top candidates to return
+
+        Returns
+        -------
+        list of dicts, each with symbol, price, probability, expected_return, score, etc.
+        """
+        batch_decisions = self.evaluate_batch(stock_windows_map)
+        if not batch_decisions:
+            return []
+
+        candidates = []
+        for symbol, decision in batch_decisions.items():
+            prob = float(decision.get('final_probability', 0))
+            exp_ret = float(decision.get('expected_return', 0))
+            conf = float(decision.get('confidence_score', prob))
+            price = float(decision.get('price', 0))
+            regime = decision.get('regime', 'unknown')
+
+            if prob < min_prob or exp_ret < min_return:
+                continue
+
+            # Composite score: higher is better
+            score = exp_ret * prob * max(0.5, conf)
+
+            candidates.append({
+                'symbol': symbol,
+                'price': price,
+                'probability': prob,
+                'expected_return': exp_ret,
+                'confidence_score': conf,
+                'regime': regime,
+                'score': score,
+                'signals': decision.get('signals', {}),
+            })
+
+        # Sort by composite score, descending
+        candidates.sort(key=lambda c: c['score'], reverse=True)
+        return candidates[:top_n]
+
 if __name__ == "__main__":
     engine = FinalEnsembleEngine()
     data_path = 'data/processed/master_labeled_dataset.parquet'
@@ -438,3 +502,4 @@ if __name__ == "__main__":
                         if k != 'signals': print(f"{k}: {v}")
     else:
         print("Data not found.")
+

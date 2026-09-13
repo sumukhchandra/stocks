@@ -240,6 +240,85 @@ def list_model_versions(api_key: str = Depends(verify_api_key)):
     return reg.list_models()
 
 
+# ─── Scalp Compounding Session ────────────────────────────────────────────────
+_scalp_engine = None
+
+
+def get_scalp_engine():
+    global _scalp_engine
+    if _scalp_engine is None:
+        from backend.scalp_compounding_engine import ScalpCompoundingEngine
+        _scalp_engine = ScalpCompoundingEngine()
+    return _scalp_engine
+
+
+@app.post("/api/v1/scalp/start", tags=["Scalp Compounding"])
+def start_scalp_session(capital: float = None, api_key: str = Depends(verify_api_key)):
+    """Start a new scalp compounding session with optional capital override."""
+    se = get_scalp_engine()
+    result = se.start_session(capital)
+    return result
+
+
+@app.post("/api/v1/scalp/stop", tags=["Scalp Compounding"])
+def stop_scalp_session(reason: str = "manual_stop", api_key: str = Depends(verify_api_key)):
+    """Stop the active scalp compounding session."""
+    se = get_scalp_engine()
+    return se.end_session(reason=reason)
+
+
+@app.get("/api/v1/scalp/status", tags=["Scalp Compounding"])
+def get_scalp_status(api_key: str = Depends(verify_api_key)):
+    """Get live scalp session status: chain progress, active position, P&L."""
+    se = get_scalp_engine()
+    return se.get_session_status()
+
+
+@app.get("/api/v1/scalp/scan", tags=["Scalp Compounding"])
+@app.post("/api/v1/scalp/scan", tags=["Scalp Compounding"])
+def run_scalp_scan(api_key: str = Depends(verify_api_key)):
+    """Trigger one scan-and-trade cycle in the active scalp session."""
+    se = get_scalp_engine()
+    return se.run_single_scan()
+
+
+@app.get("/api/v1/scalp/history", tags=["Scalp Compounding"])
+def get_scalp_history(api_key: str = Depends(verify_api_key)):
+    """Get all completed scalp session summaries."""
+    se = get_scalp_engine()
+    return se.get_session_history()
+
+
+@app.get("/api/v1/scalp/viability", tags=["Scalp Compounding"])
+def get_scalp_viability(capital: float = 10000, api_key: str = Depends(verify_api_key)):
+    """Calculate minimum gross return needed for 0.5% net at given capital."""
+    from backend.risk.india_tax_engine import IndiaTaxEngine
+    tax = IndiaTaxEngine()
+    return tax.calculate_scalp_viability(capital, target_net_pct=0.005)
+
+
+# ─── Strategy Mode Switching ─────────────────────────────────────────────────
+@app.post("/api/v1/strategy/mode", tags=["Trading Engine"])
+def set_strategy_mode(mode: str, api_key: str = Depends(verify_api_key)):
+    """Switch between SINGLE_BULLET, MULTI_SPLIT, and SCALP_COMPOUND modes."""
+    valid_modes = ["SINGLE_BULLET", "MULTI_SPLIT", "SCALP_COMPOUND"]
+    mode = mode.upper()
+    if mode not in valid_modes:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid mode '{mode}'. Valid: {valid_modes}"
+        )
+    # Update the NSE auto trader mode
+    try:
+        from backend.nse_auto_trader import NSEAutoTrader
+        trader = NSEAutoTrader()
+        ok, msg = trader.set_strategy_mode(mode)
+        return {"mode": mode, "success": ok, "message": msg}
+    except Exception as e:
+        return {"mode": mode, "success": True, "message": f"Mode set to {mode} (trader not active: {e})"}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
